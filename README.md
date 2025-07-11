@@ -11,6 +11,7 @@ A Python tool to analyze Ethereum ERC-20 tokens by fetching their recent transac
 - **Saves results to a CSV**: one row per address, new columns for each new analysis (timestamped).
 - **Deduplication**: Only new transactions (not seen in previous analyses) are saved in each new column set.
 - **Backs up the CSV** before each write.
+- **Batch update mode**: update all tracked addresses in one go.
 - **Modular code**: easy to extend for new data sources or filters.
 
 ---
@@ -75,9 +76,25 @@ Run the main script:
 python3 main.py
 ```
 
-- Enter the ERC-20 token address when prompted (format: `0x...`).
-- The script will fetch, analyze, and save results to `data/informe.csv`.
-- If you analyze the same address again, new columns will be added to its row, only counting new transactions since the last analysis.
+When you run the script, you will see a menu:
+
+```
+=== Ethereum Token Analyzer ===
+1. Track/update a single address
+2. Update ALL addresses in the CSV (batch mode)
+Select an option (1 or 2):
+```
+
+- **Option 1:**
+  - Enter an ERC-20 token address (format: `0x...`).
+  - The script will fetch, analyze, and save results for that address only.
+  - If the address already exists in the CSV, new columns will be added for the new analysis.
+
+- **Option 2:**
+  - The script will read all addresses currently tracked in `data/informe.csv`.
+  - It will fetch, analyze, and update each address in sequence, adding new columns for each new analysis.
+  - Progress and a summary will be shown at the end.
+  - If the CSV does not exist or is empty, you will be notified.
 
 ---
 
@@ -104,7 +121,9 @@ python3 main.py
     - New row is created in CSV with `_1` columns.
 2. **Re-analyze the same address:**
     - New columns (`_2`, `_3`, ...) are added to the same row, only for new transactions since the last analysis.
-3. **Analyze another address:**
+3. **Batch update:**
+    - Use option 2 to update all tracked addresses in one go.
+4. **Analyze another address:**
     - New row is created.
 
 ---
