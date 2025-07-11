@@ -25,3 +25,7 @@ __pycache__/
 
 # OS specific
 .DS_Store
+
+# Ignore CSV backups
+data/backups/
+*.backup_*.csv

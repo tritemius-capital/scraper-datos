@@ -7,11 +7,14 @@ import json
 
 def backup_csv_if_exists(csv_path):
     """
-    If the CSV file exists, create a backup with a timestamp.
+    If the CSV file exists, create a backup with a timestamp in data/backups/.
     """
     if os.path.exists(csv_path):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = csv_path.replace(".csv", f".backup_{timestamp}.csv")
+        backup_dir = os.path.join(os.path.dirname(csv_path), "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        base_name = os.path.basename(csv_path).replace(".csv", f".backup_{timestamp}.csv")
+        backup_path = os.path.join(backup_dir, base_name)
         shutil.copy2(csv_path, backup_path)
         print(f"Backup created: {backup_path}")
 
