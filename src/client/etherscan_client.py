@@ -1,6 +1,6 @@
 import requests
 from datetime import datetime
-from config import ETHERSCAN_API_KEY
+from src.config import ETHERSCAN_API_KEY
 
 class EtherscanClient:
     BASE_URL = 'https://api.etherscan.io/api'
