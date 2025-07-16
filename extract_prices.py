@@ -115,12 +115,41 @@ def main():
         print(f"✅ Extracted {len(prices)} price points")
         print()
         
+        # Analyze big buys from the extracted prices
+        print("🔍 Analyzing big buys from price data...")
+        big_buy_analysis = extractor.big_buy_analyzer.get_big_buy_analysis_from_prices(prices, threshold_eth=0.1)
+        
+        if big_buy_analysis and big_buy_analysis['big_buys']:
+            print(f"✅ Found {len(big_buy_analysis['big_buys'])} big buys >= 0.1 ETH")
+            print()
+            
+            # Show details of each big buy
+            for i, big_buy in enumerate(big_buy_analysis['big_buys'][:5], 1):  # Show first 5
+                print(f"Big Buy #{i}:")
+                print(f"  📦 Block: {big_buy['big_buy_block']}")
+                print(f"  ⏰ Timestamp: {big_buy['big_buy_timestamp']}")
+                print(f"  💰 Price at Big Buy: ${big_buy['price_at_big_buy']:.8f}")
+                print(f"  📈 Max Price 5d: ${big_buy['max_price_5d']:.8f}")
+                print(f"  📉 Min Price 5d: ${big_buy['min_price_5d']:.8f}")
+                print(f"  🚀 Max Change: {big_buy['price_change_max_5d']:.2f}%")
+                print(f"  📉 Min Change: {big_buy['price_change_min_5d']:.2f}%")
+                print(f"  💸 Estimated ETH: {big_buy['eth_amount']:.4f} ETH")
+                print(f"  📊 Price Change: {big_buy['price_change_percent']:.2f}%")
+                print()
+            
+            if len(big_buy_analysis['big_buys']) > 5:
+                print(f"... and {len(big_buy_analysis['big_buys']) - 5} more big buys")
+                print()
+        else:
+            print("❌ No big buys found")
+            print()
+        
         # Save in object format (2 cells: address + all objects)
         base_filename = f"prices_{token_address}_{start_block}_{end_block}"
         object_csv_file = f"data/{base_filename}_objects.csv"
         
         print("💾 Saving in object format...")
-        extractor.save_prices_to_object_csv(prices, object_csv_file, token_address, pool_address)
+        extractor.save_prices_to_object_csv(prices, object_csv_file, token_address, pool_address, big_buy_analysis)
         print(f"✅ Saved in: {object_csv_file}")
         print()
         

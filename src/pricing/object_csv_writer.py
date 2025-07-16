@@ -7,6 +7,7 @@ Handles writing price data to CSV files with horizontal format.
 import csv
 import logging
 from typing import List, Dict, Optional
+import json
 
 
 class ObjectCSVWriter:
@@ -67,7 +68,7 @@ class ObjectCSVWriter:
         
         return summary
     
-    def save_prices_to_object_csv(self, prices: List[Dict], output_file: str, token_address: str, pool_address: str = "", stats: Optional[Dict] = None):
+    def save_prices_to_object_csv(self, prices: List[Dict], output_file: str, token_address: str, pool_address: str = "", stats: Optional[Dict] = None, big_buy_analysis: Optional[Dict] = None, append: bool = False):
         """
         Save price data to CSV file with JSON blocks and statistics in one column.
         
@@ -77,16 +78,32 @@ class ObjectCSVWriter:
             token_address: Token address for the first column
             pool_address: Pool address for the second column
             stats: Price statistics dictionary (optional)
+            big_buy_analysis: Big buy analysis dictionary (optional)
+            append: If True, append to existing file. If False, overwrite file.
         """
         if not prices:
             self.logger.warning("No prices to save")
             return
         
         try:
-            with open(output_file, 'w', newline='') as f:
-                fieldnames = ['token_address', 'pool_address', 'price_summary', 'all_blocks']
+            # Check if file exists and we're appending
+            file_exists = False
+            if append:
+                try:
+                    with open(output_file, 'r') as f:
+                        file_exists = True
+                except FileNotFoundError:
+                    file_exists = False
+            
+            # Open file in appropriate mode
+            mode = 'a' if append and file_exists else 'w'
+            with open(output_file, mode, newline='') as f:
+                fieldnames = ['token_address', 'pool_address', 'price_summary', 'big_buy_analysis', 'all_blocks']
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
-                writer.writeheader()
+                
+                # Write header only if creating new file or not appending
+                if not append or not file_exists:
+                    writer.writeheader()
                 
                 # Create all block objects with JSON format
                 block_objects = []
@@ -100,16 +117,35 @@ class ObjectCSVWriter:
                 # Create price summary
                 price_summary = self._create_stats_summary(stats) if stats else ""
                 
+                # Create big buy analysis summary
+                big_buy_summary = json.dumps(big_buy_analysis) if big_buy_analysis else ""
+                
                 # Write single row with all data
                 row_data = {
                     'token_address': token_address,
                     'pool_address': pool_address,
                     'price_summary': price_summary,
+                    'big_buy_analysis': big_buy_summary,
                     'all_blocks': all_blocks
                 }
                 writer.writerow(row_data)
             
-            self.logger.info(f"Saved {len(prices)} price objects to {output_file}")
+            action = "Appended" if append and file_exists else "Saved"
+            self.logger.info(f"{action} {len(prices)} price objects to {output_file}")
             
         except Exception as e:
-            self.logger.error(f"Error saving price objects to CSV: {e}") 
+            self.logger.error(f"Error saving price objects to CSV: {e}")
+    
+    def append_prices_to_object_csv(self, prices: List[Dict], output_file: str, token_address: str, pool_address: str = "", stats: Optional[Dict] = None, big_buy_analysis: Optional[Dict] = None):
+        """
+        Append price data to existing CSV file.
+        
+        Args:
+            prices: List of price data points
+            output_file: Output CSV file path
+            token_address: Token address for the first column
+            pool_address: Pool address for the second column
+            stats: Price statistics dictionary (optional)
+            big_buy_analysis: Big buy analysis dictionary (optional)
+        """
+        return self.save_prices_to_object_csv(prices, output_file, token_address, pool_address, stats, big_buy_analysis, append=True) 

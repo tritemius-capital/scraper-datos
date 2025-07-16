@@ -220,7 +220,7 @@ class PriceExtractor:
             'error': None
         }
     
-    def save_prices_to_object_csv(self, prices: List[Dict], output_file: str, token_address: str, pool_address: str = ""):
+    def save_prices_to_object_csv(self, prices: List[Dict], output_file: str, token_address: str, pool_address: str = "", big_buy_analysis: Optional[Dict] = None):
         """
         Save price data to CSV file with objects in single cells.
         
@@ -229,7 +229,8 @@ class PriceExtractor:
             output_file: Output CSV file path
             token_address: Token address
             pool_address: Pool address
+            big_buy_analysis: Big buy analysis dictionary (optional)
         """
         # Calculate price statistics
         stats = self.calculate_price_stats(prices)
-        return self.object_csv_writer.save_prices_to_object_csv(prices, output_file, token_address, pool_address, stats) 
+        return self.object_csv_writer.save_prices_to_object_csv(prices, output_file, token_address, pool_address, stats, big_buy_analysis) 
