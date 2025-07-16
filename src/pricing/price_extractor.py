@@ -14,6 +14,7 @@ from src.pricing.price_calculator import PriceCalculator
 from src.pricing.eth_price_reader import ETHPriceReader
 from src.pricing.csv_writer import CSVWriter
 from src.pricing.object_csv_writer import ObjectCSVWriter
+from src.pricing.big_buy_analyzer import BigBuyAnalyzer
 
 class PriceExtractor:
     """Main orchestrator for extracting token prices from Uniswap V2 pool swap events."""
@@ -36,6 +37,7 @@ class PriceExtractor:
         self.eth_price_reader = ETHPriceReader(eth_price_file)
         self.csv_writer = CSVWriter()
         self.object_csv_writer = ObjectCSVWriter()
+        self.big_buy_analyzer = BigBuyAnalyzer(etherscan_api_key)
         self.w3 = Web3(Web3.HTTPProvider("https://eth.llamarpc.com"))
 
     def get_token_info(self, pool_address: str) -> Dict:
@@ -175,6 +177,48 @@ class PriceExtractor:
         }
         
         return stats
+    
+    def analyze_token_complete(self, token_address: str, pool_address: str, 
+                             start_block: int, end_block: int, 
+                             threshold_eth: float = 0.1) -> Dict:
+        """
+        Complete token analysis including prices and big buy analysis.
+        
+        Args:
+            token_address: Token address to analyze
+            pool_address: Pool address
+            start_block: Starting block number
+            end_block: Ending block number
+            threshold_eth: Minimum ETH amount for big buy analysis
+            
+        Returns:
+            Dictionary with complete analysis
+        """
+        # Extract prices
+        prices = self.extract_prices(token_address, pool_address, start_block, end_block)
+        
+        if not prices:
+            return {
+                'prices': [],
+                'price_stats': {},
+                'big_buy_analysis': {},
+                'error': 'No prices found'
+            }
+        
+        # Calculate price statistics
+        price_stats = self.calculate_price_stats(prices)
+        
+        # Analyze big buys
+        big_buy_analysis = self.big_buy_analyzer.get_big_buy_analysis_from_prices(
+            prices, threshold_eth
+        )
+        
+        return {
+            'prices': prices,
+            'price_stats': price_stats,
+            'big_buy_analysis': big_buy_analysis,
+            'error': None
+        }
     
     def save_prices_to_object_csv(self, prices: List[Dict], output_file: str, token_address: str, pool_address: str = ""):
         """
