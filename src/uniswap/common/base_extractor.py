@@ -257,12 +257,13 @@ class BaseUniswapExtractor(ABC):
             # Get direct transactions (if available)
             transactions = []  # This would need to be implemented or passed in
             
-            # Analyze big buys using the new analyzer
+            # Analyze big buys using the new analyzer with price enrichment
             big_buy_analysis = analyzer.combine_big_buy_analysis(
                 swap_events=swap_events,
                 transactions=transactions,
                 pool_info=pool_info,
-                threshold_eth=threshold_eth
+                threshold_eth=threshold_eth,
+                prices=prices  # Pass prices for enrichment
             )
             
             return big_buy_analysis

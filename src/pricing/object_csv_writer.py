@@ -67,8 +67,14 @@ class ObjectCSVWriter:
         amount0_out = big_buy_data.get('amount0Out', 0)
         amount1_out = big_buy_data.get('amount1Out', 0)
         
-        # Create JSON block with all available fields
-        big_buy_json = f'{{"blockNumber":"{block_number}","timestamp":"{timestamp}","ethAmount":"{eth_amount}","transactionHash":"{transaction_hash}","source":"{source}","amount0In":"{amount0_in}","amount1In":"{amount1_in}","amount0Out":"{amount0_out}","amount1Out":"{amount1_out}"}}'
+        # Include price information if available
+        token_price_eth = self._format_price(big_buy_data.get('token_price_eth'))
+        token_price_usd = self._format_price(big_buy_data.get('token_price_usd'))
+        eth_price_usd = self._format_price(big_buy_data.get('eth_price_usd'))
+        usd_value = self._format_price(big_buy_data.get('usd_value'))
+        
+        # Create JSON block with all available fields including prices
+        big_buy_json = f'{{"blockNumber":"{block_number}","timestamp":"{timestamp}","ethAmount":"{eth_amount}","transactionHash":"{transaction_hash}","source":"{source}","amount0In":"{amount0_in}","amount1In":"{amount1_in}","amount0Out":"{amount0_out}","amount1Out":"{amount1_out}","token_price_eth":"{token_price_eth}","token_price_usd":"{token_price_usd}","eth_price_usd":"{eth_price_usd}","usd_value":"{usd_value}"}}'
         
         return f'big_buy{buy_index}:{big_buy_json}'
     

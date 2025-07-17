@@ -289,8 +289,64 @@ class BigBuyAnalyzer:
             self.logger.error(f"Error analyzing big buys from transactions: {e}")
             return big_buys
     
+    def enrich_big_buys_with_prices(self, big_buys: List[Dict], prices: List[Dict]) -> List[Dict]:
+        """
+        Enrich big buy data with token price information at the time of the big buy.
+        
+        Args:
+            big_buys: List of big buy transactions
+            prices: List of price data points with timestamps
+            
+        Returns:
+            List of big buys enriched with price information
+        """
+        if not big_buys or not prices:
+            return big_buys
+        
+        # Create a price lookup by timestamp (closest match)
+        price_lookup = {}
+        for price in prices:
+            timestamp = price.get('timestamp')
+            if timestamp:
+                price_lookup[timestamp] = price
+        
+        enriched_big_buys = []
+        
+        for big_buy in big_buys:
+            enriched_buy = big_buy.copy()
+            buy_timestamp = big_buy.get('timestamp')
+            
+            # Find the closest price data for this big buy
+            if buy_timestamp and buy_timestamp in price_lookup:
+                price_data = price_lookup[buy_timestamp]
+                enriched_buy.update({
+                    'token_price_eth': price_data.get('token_price_eth'),
+                    'token_price_usd': price_data.get('token_price_usd'),
+                    'eth_price_usd': price_data.get('eth_price_usd')
+                })
+                
+                # Calculate USD value of the big buy
+                eth_amount = big_buy.get('ethAmount', 0)
+                eth_price_usd = price_data.get('eth_price_usd', 0)
+                if eth_amount and eth_price_usd:
+                    enriched_buy['usd_value'] = eth_amount * eth_price_usd
+                else:
+                    enriched_buy['usd_value'] = None
+            else:
+                # No price data found for this timestamp
+                enriched_buy.update({
+                    'token_price_eth': None,
+                    'token_price_usd': None,
+                    'eth_price_usd': None,
+                    'usd_value': None
+                })
+            
+            enriched_big_buys.append(enriched_buy)
+        
+        return enriched_big_buys
+    
     def combine_big_buy_analysis(self, swap_events: List[Dict], transactions: List[Dict], 
-                                pool_info: Dict, threshold_eth: float = 0.1) -> Dict:
+                                pool_info: Dict, threshold_eth: float = 0.1, prices: List[Dict] = None) -> Dict:
         """
         Combine analysis from both swap events and direct transactions.
         
@@ -299,6 +355,7 @@ class BigBuyAnalyzer:
             transactions: List of direct transactions
             pool_info: Pool information
             threshold_eth: Minimum ETH amount for big buy
+            prices: List of price data points to enrich big buys with price information
             
         Returns:
             Combined big buy analysis
@@ -317,6 +374,10 @@ class BigBuyAnalyzer:
             # Combine and sort by block number
             all_big_buys = swap_big_buys + tx_big_buys
             all_big_buys.sort(key=lambda x: x.get('blockNumber', 0))
+            
+            # Enrich big buys with price information if available
+            if prices:
+                all_big_buys = self.enrich_big_buys_with_prices(all_big_buys, prices)
             
             # Calculate statistics
             total_eth = sum(buy.get('ethAmount', 0) for buy in all_big_buys)
