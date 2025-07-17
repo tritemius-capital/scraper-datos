@@ -53,6 +53,43 @@ class ObjectCSVWriter:
         
         return f'bloque{block_index}:{block_json}'
     
+    def _create_big_buy_json(self, big_buy_data: Dict, buy_index: int) -> str:
+        """Create a JSON block object from big buy data."""
+        block_number = big_buy_data.get('blockNumber', 'N/A')
+        timestamp = big_buy_data.get('timestamp', 'N/A')
+        eth_amount = self._format_price(big_buy_data.get('ethAmount', 0))
+        transaction_hash = big_buy_data.get('transactionHash', 'N/A')
+        source = big_buy_data.get('source', 'N/A')
+        
+        # Include additional fields if they exist
+        amount0_in = big_buy_data.get('amount0In', 0)
+        amount1_in = big_buy_data.get('amount1In', 0)
+        amount0_out = big_buy_data.get('amount0Out', 0)
+        amount1_out = big_buy_data.get('amount1Out', 0)
+        
+        # Create JSON block with all available fields
+        big_buy_json = f'{{"blockNumber":"{block_number}","timestamp":"{timestamp}","ethAmount":"{eth_amount}","transactionHash":"{transaction_hash}","source":"{source}","amount0In":"{amount0_in}","amount1In":"{amount1_in}","amount0Out":"{amount0_out}","amount1Out":"{amount1_out}"}}'
+        
+        return f'big_buy{buy_index}:{big_buy_json}'
+    
+    def _create_big_buy_blocks(self, big_buy_analysis: Dict) -> str:
+        """Create individual blocks for each big buy."""
+        if not big_buy_analysis or 'big_buys' not in big_buy_analysis:
+            return ""
+        
+        big_buys = big_buy_analysis['big_buys']
+        if not big_buys:
+            return ""
+        
+        # Create individual blocks for each big buy
+        big_buy_blocks = []
+        for i, big_buy in enumerate(big_buys, 1):
+            big_buy_block = self._create_big_buy_json(big_buy, i)
+            big_buy_blocks.append(big_buy_block)
+        
+        # Join all big buy blocks with space separator
+        return " ".join(big_buy_blocks)
+    
     def _create_stats_summary(self, stats: Dict) -> str:
         """Create a summary string from price statistics."""
         if not stats:
@@ -68,7 +105,7 @@ class ObjectCSVWriter:
         
         return summary
     
-    def save_prices_to_object_csv(self, prices: List[Dict], output_file: str, token_address: str, pool_address: str = "", stats: Optional[Dict] = None, big_buy_analysis: Optional[Dict] = None, append: bool = False):
+    def save_prices_to_object_csv(self, prices: List[Dict], output_file: str, token_address: str, pool_address: str = "", uniswap_version: str = "", stats: Optional[Dict] = None, big_buy_analysis: Optional[Dict] = None, append: bool = False):
         """
         Save price data to CSV file with JSON blocks and statistics in one column.
         
@@ -77,6 +114,7 @@ class ObjectCSVWriter:
             output_file: Output CSV file path
             token_address: Token address for the first column
             pool_address: Pool address for the second column
+            uniswap_version: Uniswap version (v2/v3) for the third column
             stats: Price statistics dictionary (optional)
             big_buy_analysis: Big buy analysis dictionary (optional)
             append: If True, append to existing file. If False, overwrite file.
@@ -98,7 +136,7 @@ class ObjectCSVWriter:
             # Open file in appropriate mode
             mode = 'a' if append and file_exists else 'w'
             with open(output_file, mode, newline='') as f:
-                fieldnames = ['token_address', 'pool_address', 'price_summary', 'big_buy_analysis', 'all_blocks']
+                fieldnames = ['token_address', 'pool_address', 'uniswap_version', 'price_summary', 'big_buy_analysis', 'all_blocks']
                 writer = csv.DictWriter(f, fieldnames=fieldnames)
                 
                 # Write header only if creating new file or not appending
@@ -118,12 +156,13 @@ class ObjectCSVWriter:
                 price_summary = self._create_stats_summary(stats) if stats else ""
                 
                 # Create big buy analysis summary
-                big_buy_summary = json.dumps(big_buy_analysis) if big_buy_analysis else ""
+                big_buy_summary = self._create_big_buy_blocks(big_buy_analysis) if big_buy_analysis else ""
                 
                 # Write single row with all data
                 row_data = {
                     'token_address': token_address,
                     'pool_address': pool_address,
+                    'uniswap_version': uniswap_version,
                     'price_summary': price_summary,
                     'big_buy_analysis': big_buy_summary,
                     'all_blocks': all_blocks
@@ -136,7 +175,7 @@ class ObjectCSVWriter:
         except Exception as e:
             self.logger.error(f"Error saving price objects to CSV: {e}")
     
-    def append_prices_to_object_csv(self, prices: List[Dict], output_file: str, token_address: str, pool_address: str = "", stats: Optional[Dict] = None, big_buy_analysis: Optional[Dict] = None):
+    def append_prices_to_object_csv(self, prices: List[Dict], output_file: str, token_address: str, pool_address: str = "", uniswap_version: str = "", stats: Optional[Dict] = None, big_buy_analysis: Optional[Dict] = None):
         """
         Append price data to existing CSV file.
         
@@ -145,7 +184,8 @@ class ObjectCSVWriter:
             output_file: Output CSV file path
             token_address: Token address for the first column
             pool_address: Pool address for the second column
+            uniswap_version: Uniswap version (v2/v3) for the third column
             stats: Price statistics dictionary (optional)
             big_buy_analysis: Big buy analysis dictionary (optional)
         """
-        return self.save_prices_to_object_csv(prices, output_file, token_address, pool_address, stats, big_buy_analysis, append=True) 
+        return self.save_prices_to_object_csv(prices, output_file, token_address, pool_address, uniswap_version, stats, big_buy_analysis, append=True) 

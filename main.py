@@ -27,10 +27,13 @@ def extract_token_data(token_address, pool_address, num_blocks=1000, uniswap_ver
             # Use specified version
             print(f"Using Uniswap {uniswap_version.upper()}")
             extractor = factory.create_extractor(uniswap_version, etherscan_api_key)
+            detected_version = uniswap_version
         else:
             # Auto-detect version
             print("Auto-detecting Uniswap version...")
             extractor = factory.create_auto_extractor(pool_address, etherscan_api_key)
+            detected_version = factory.detect_version_from_pool(pool_address) or "v2"
+            print(f"Detected Uniswap {detected_version.upper()}")
         
         # Get latest block number
         latest_block = extractor.get_latest_block()
@@ -63,6 +66,7 @@ def extract_token_data(token_address, pool_address, num_blocks=1000, uniswap_ver
             output_file=csv_path,
             token_address=token_address,
             pool_address=pool_address,
+            uniswap_version=detected_version,
             stats=result.get('price_stats', {}),
             big_buy_analysis=result.get('big_buy_analysis', {}),
             append=True  # Append to existing file instead of overwriting
