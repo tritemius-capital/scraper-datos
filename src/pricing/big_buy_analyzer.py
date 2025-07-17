@@ -96,35 +96,66 @@ class BigBuyAnalyzer:
             return big_buys
     
     def _decode_swap_event(self, event: Dict) -> Optional[Dict]:
-        """Decode a swap event from raw event data."""
+        """Decode a swap event from raw event data (supports both V2 and V3)."""
         try:
-            # Basic swap event structure for V2
-            # Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)
+            # Check if this is V2 or V3 based on the number of topics
+            # V2: Swap(address, uint256, uint256, uint256, uint256, address) - 3 topics
+            # V3: Swap(address, address, int256, int256, uint160, uint128, int24) - 3 topics
             
-            # Parse the data field (contains amount0In, amount1In, amount0Out, amount1Out)
+            topics = event.get('topics', [])
             data = event.get('data', '')
+            
             if not data or data == '0x':
                 return None
             
             # Remove '0x' prefix and decode
             data = data[2:]  # Remove '0x'
             
-            # Each parameter is 32 bytes (64 hex characters)
-            if len(data) < 256:  # 4 parameters * 64 hex chars
-                return None
+            # Try V2 format first (4 uint256 parameters)
+            if len(data) >= 256:  # 4 parameters * 64 hex chars
+                try:
+                    amount0In = int(data[0:64], 16)
+                    amount1In = int(data[64:128], 16)
+                    amount0Out = int(data[128:192], 16)
+                    amount1Out = int(data[192:256], 16)
+                    
+                    return {
+                        'version': 'v2',
+                        'amount0In': amount0In,
+                        'amount1In': amount1In,
+                        'amount0Out': amount0Out,
+                        'amount1Out': amount1Out
+                    }
+                except:
+                    pass
             
-            # Extract the 4 uint256 parameters
-            amount0In = int(data[0:64], 16)
-            amount1In = int(data[64:128], 16)
-            amount0Out = int(data[128:192], 16)
-            amount1Out = int(data[192:256], 16)
+            # Try V3 format (2 int256 parameters + others)
+            if len(data) >= 128:  # At least 2 parameters * 64 hex chars
+                try:
+                    # V3: amount0, amount1 are signed integers
+                    amount0_raw = int(data[0:64], 16)
+                    amount1_raw = int(data[64:128], 16)
+                    
+                    # Convert to signed integers (two's complement)
+                    if amount0_raw > 2**255:
+                        amount0 = amount0_raw - 2**256
+                    else:
+                        amount0 = amount0_raw
+                    
+                    if amount1_raw > 2**255:
+                        amount1 = amount1_raw - 2**256
+                    else:
+                        amount1 = amount1_raw
+                    
+                    return {
+                        'version': 'v3',
+                        'amount0': amount0,
+                        'amount1': amount1
+                    }
+                except:
+                    pass
             
-            return {
-                'amount0In': amount0In,
-                'amount1In': amount1In,
-                'amount0Out': amount0Out,
-                'amount1Out': amount1Out
-            }
+            return None
             
         except Exception as e:
             self.logger.warning(f"Error decoding swap event: {e}")
@@ -133,7 +164,7 @@ class BigBuyAnalyzer:
     def _calculate_eth_amount_from_swap(self, decoded_event: Dict, pool_info: Dict, 
                                       token0: str, token1: str, decimals0: int, decimals1: int) -> Optional[float]:
         """
-        Calculate ETH amount from a swap event.
+        Calculate ETH amount from a swap event (supports both V2 and V3).
         
         Args:
             decoded_event: Decoded swap event data
@@ -148,35 +179,67 @@ class BigBuyAnalyzer:
         """
         try:
             weth_address = self.WETH_ADDRESS.lower()
+            version = decoded_event.get('version', 'v2')
             
-            # Get amounts in human-readable units
-            a0in = decoded_event['amount0In'] / (10 ** decimals0)
-            a1in = decoded_event['amount1In'] / (10 ** decimals1)
-            a0out = decoded_event['amount0Out'] / (10 ** decimals0)
-            a1out = decoded_event['amount1Out'] / (10 ** decimals1)
-            
-            # Determine which token is WETH
-            if token0 == weth_address:
-                # WETH is token0
-                weth_in = a0in
-                weth_out = a0out
-            elif token1 == weth_address:
-                # WETH is token1
-                weth_in = a1in
-                weth_out = a1out
+            if version == 'v2':
+                # V2 format: amount0In, amount1In, amount0Out, amount1Out
+                a0in = decoded_event['amount0In'] / (10 ** decimals0)
+                a1in = decoded_event['amount1In'] / (10 ** decimals1)
+                a0out = decoded_event['amount0Out'] / (10 ** decimals0)
+                a1out = decoded_event['amount1Out'] / (10 ** decimals1)
+                
+                # Determine which token is WETH
+                if token0 == weth_address:
+                    # WETH is token0
+                    weth_in = a0in
+                    weth_out = a0out
+                elif token1 == weth_address:
+                    # WETH is token1
+                    weth_in = a1in
+                    weth_out = a1out
+                else:
+                    # WETH not in this pool
+                    return None
+                
+                # Check if this is a buy (WETH going in, tokens coming out)
+                if weth_in > 0 and weth_out == 0:
+                    # This is a buy with ETH/WETH
+                    return weth_in
+                elif weth_out > 0 and weth_in == 0:
+                    # This is a sell (WETH coming out)
+                    return None
+                else:
+                    # Complex swap or no clear direction
+                    return None
+                    
+            elif version == 'v3':
+                # V3 format: amount0, amount1 (signed integers)
+                # Positive = token going in, Negative = token going out
+                a0 = decoded_event['amount0'] / (10 ** decimals0)
+                a1 = decoded_event['amount1'] / (10 ** decimals1)
+                
+                # Determine which token is WETH
+                if token0 == weth_address:
+                    # WETH is token0
+                    if a0 > 0:
+                        # WETH going in (positive) = buy
+                        return a0
+                    else:
+                        # WETH going out (negative) = sell
+                        return None
+                elif token1 == weth_address:
+                    # WETH is token1
+                    if a1 > 0:
+                        # WETH going in (positive) = buy
+                        return a1
+                    else:
+                        # WETH going out (negative) = sell
+                        return None
+                else:
+                    # WETH not in this pool
+                    return None
             else:
-                # WETH not in this pool
-                return None
-            
-            # Check if this is a buy (WETH going in, tokens coming out)
-            if weth_in > 0 and weth_out == 0:
-                # This is a buy with ETH/WETH
-                return weth_in
-            elif weth_out > 0 and weth_in == 0:
-                # This is a sell (WETH coming out)
-                return None
-            else:
-                # Complex swap or no clear direction
+                # Unknown version
                 return None
                 
         except Exception as e:
