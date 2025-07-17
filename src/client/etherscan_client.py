@@ -69,20 +69,29 @@ class EtherscanClient:
         
         return data['result']
 
-    def get_swap_events(self, pool_address, from_block, to_block, batch_size=1000):
+    def get_swap_events(self, pool_address, from_block, to_block, batch_size=1000, version='v2'):
         """
-        Get Swap events from a Uniswap V2 pool.
+        Get Swap events from a Uniswap pool (V2 or V3).
         
         Args:
             pool_address: Pool contract address
             from_block: Starting block number
             to_block: Ending block number
             batch_size: Number of blocks per request (max 1000 for free tier)
+            version: Uniswap version ('v2' or 'v3')
         """
         from tqdm import tqdm
         
-        # Swap event signature: 0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822
-        swap_topic = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822"
+        # Swap event signatures for different Uniswap versions
+        swap_topics = {
+            'v2': "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822",
+            'v3': "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67"
+        }
+        
+        if version not in swap_topics:
+            raise ValueError(f"Unsupported Uniswap version: {version}. Supported: {list(swap_topics.keys())}")
+        
+        swap_topic = swap_topics[version]
         
         all_logs = []
         current_block = from_block
@@ -135,6 +144,14 @@ class EtherscanClient:
                     continue
         
         return all_logs
+
+    def get_swap_events_v2(self, pool_address, from_block, to_block, batch_size=1000):
+        """Get Swap events from a Uniswap V2 pool (backward compatibility)."""
+        return self.get_swap_events(pool_address, from_block, to_block, batch_size, 'v2')
+
+    def get_swap_events_v3(self, pool_address, from_block, to_block, batch_size=1000):
+        """Get Swap events from a Uniswap V3 pool."""
+        return self.get_swap_events(pool_address, from_block, to_block, batch_size, 'v3')
 
     def get_latest_block(self):
         """Get the latest block number."""

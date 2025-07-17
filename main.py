@@ -1,13 +1,13 @@
-from src.pricing.price_extractor import PriceExtractor
+from src.uniswap import UniswapExtractorFactory
 from src.pricing.object_csv_writer import ObjectCSVWriter
 import os
 import json
 from datetime import datetime
 import sys
 
-def extract_token_data(token_address, pool_address, num_blocks=1000):
+def extract_token_data(token_address, pool_address, num_blocks=1000, uniswap_version=None):
     """
-    Extract price data and analyze big buys for a token
+    Extract price data and analyze big buys for a token using the unified Uniswap system
     """
     print(f"\n=== Extracting data for token {token_address} ===")
     print(f"Pool: {pool_address}")
@@ -20,11 +20,20 @@ def extract_token_data(token_address, pool_address, num_blocks=1000):
             print("Error: ETHERSCAN_API_KEY environment variable not set")
             return False
         
-        # Initialize the price extractor
-        extractor = PriceExtractor(etherscan_api_key)
+        # Create factory and extractor
+        factory = UniswapExtractorFactory()
+        
+        if uniswap_version:
+            # Use specified version
+            print(f"Using Uniswap {uniswap_version.upper()}")
+            extractor = factory.create_extractor(uniswap_version, etherscan_api_key)
+        else:
+            # Auto-detect version
+            print("Auto-detecting Uniswap version...")
+            extractor = factory.create_auto_extractor(pool_address, etherscan_api_key)
         
         # Get latest block number
-        latest_block = extractor.w3.eth.block_number
+        latest_block = extractor.get_latest_block()
         start_block = latest_block - num_blocks + 1
         end_block = latest_block
         
@@ -83,6 +92,7 @@ def extract_token_data(token_address, pool_address, num_blocks=1000):
 def main():
     print("=== Ethereum Token Price Extractor & Big Buy Analyzer ===")
     print("This tool will extract price data and analyze big buys for a token")
+    print("Supports both Uniswap V2 and V3 pools")
     
     # Get token address
     token_address = input("\nEnter the token address (0x...): ").strip()
@@ -91,17 +101,30 @@ def main():
         return
     
     # Get pool address
-    pool_address = input("Enter the Uniswap V2 pool address (0x...): ").strip()
+    pool_address = input("Enter the Uniswap pool address (0x...): ").strip()
     if not pool_address.startswith("0x") or len(pool_address) != 42:
         print("Invalid pool address format. Must be a 42-character hex string starting with 0x.")
         return
     
+    # Get Uniswap version preference
+    version_input = input("Enter Uniswap version (v2/v3) or press Enter for auto-detect: ").strip().lower()
+    uniswap_version = None
+    if version_input in ['v2', 'v3']:
+        uniswap_version = version_input
+        print(f"Using Uniswap {version_input.upper()}")
+        print("⚠️  Note: Make sure the pool address matches the specified version!")
+        print("   If unsure, press Enter for auto-detection.")
+    elif version_input == "":
+        print("Auto-detecting Uniswap version...")
+    else:
+        print("Invalid version. Auto-detecting...")
+    
     # Get number of blocks
     while True:
         try:
-            num_blocks_input = input("Enter number of blocks to analyze (default 1000): ").strip()
+            num_blocks_input = input("Enter number of blocks to analyze (default 15000): ").strip()
             if num_blocks_input == "":
-                num_blocks = 1000
+                num_blocks = 15000
             else:
                 num_blocks = int(num_blocks_input)
                 if num_blocks <= 0:
@@ -129,7 +152,7 @@ def main():
     os.makedirs("data", exist_ok=True)
     
     # Extract data
-    success = extract_token_data(token_address, pool_address, num_blocks)
+    success = extract_token_data(token_address, pool_address, num_blocks, uniswap_version)
     
     if success:
         print("\n✅ Analysis completed successfully!")
