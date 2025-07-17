@@ -1,362 +1,286 @@
 """
-Big Buy Analyzer for Uniswap V2 Price Data
+Big Buy Analyzer Module
 
-Analyzes big buy transactions and their price impact over 5 days.
+Analyzes transactions to identify "big buys" - transactions involving significant amounts of ETH.
+Considers both direct ETH transactions and ETH/WETH amounts from Uniswap swap events.
 """
 
 import logging
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
-from src.client.etherscan_client import EtherscanClient
+from web3 import Web3
+
 
 class BigBuyAnalyzer:
-    """Analyzes big buy transactions and their price impact."""
+    """Analyzes transactions to identify big buys based on ETH amounts."""
     
-    def __init__(self, etherscan_api_key: str):
-        self.etherscan_client = EtherscanClient(etherscan_api_key)
+    def __init__(self):
         self.logger = logging.getLogger(__name__)
+        
+        # WETH contract address (Wrapped ETH)
+        self.WETH_ADDRESS = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"
+        
+        # Uniswap V2 Router address
+        self.UNISWAP_V2_ROUTER = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"
+        
+        # Uniswap V3 Router address
+        self.UNISWAP_V3_ROUTER = "0xE592427A0AEce92De3Edee1F18E0157C05861564"
     
-    def find_big_buys_in_history(self, token_address: str, pool_address: str, 
-                                start_block: int, end_block: int, 
-                                threshold_eth: float = 0.1) -> List[Dict]:
+    def analyze_big_buys_from_swap_events(self, swap_events: List[Dict], pool_info: Dict, 
+                                         threshold_eth: float = 0.1) -> List[Dict]:
         """
-        Find all big buy transactions in the historical data.
+        Analyze swap events to identify big buys based on ETH/WETH amounts.
         
         Args:
-            token_address: Token address to analyze
-            pool_address: Pool address
-            start_block: Starting block number
-            end_block: Ending block number
-            threshold_eth: Minimum ETH amount to consider a big buy
+            swap_events: List of raw swap events from Etherscan
+            pool_info: Pool information (token0, token1, decimals)
+            threshold_eth: Minimum ETH amount to consider a "big buy"
             
         Returns:
-            List of big buy transactions with details
+            List of big buy transactions
         """
         big_buys = []
         
         try:
-            self.logger.info(f"Searching for big buys >= {threshold_eth} ETH in blocks {start_block} to {end_block}")
+            token0 = pool_info.get('token0', '').lower()
+            token1 = pool_info.get('token1', '').lower()
+            decimals0 = pool_info.get('decimals0', 18)
+            decimals1 = pool_info.get('decimals1', 18)
             
-            # Get all swap events from the pool
-            swap_events = self.etherscan_client.get_swap_events(pool_address, start_block, end_block)
+            # Check if WETH is one of the tokens in the pool
+            weth_in_pool = (self.WETH_ADDRESS.lower() in [token0, token1])
             
-            if not swap_events:
-                self.logger.info("No swap events found")
+            if not weth_in_pool:
+                self.logger.info("WETH not found in pool, skipping swap event analysis")
                 return big_buys
-            
-            self.logger.info(f"Found {len(swap_events)} swap events to analyze")
-            
-            # Get pool info to understand token0/token1
-            from web3 import Web3
-            w3 = Web3(Web3.HTTPProvider("https://eth.llamarpc.com"))
-            
-            # Minimal ABI for token0/token1/decimals
-            PAIR_ABI = [
-                {"constant":True,"inputs":[],"name":"token0","outputs":[{"name":"","type":"address"}],"type":"function"},
-                {"constant":True,"inputs":[],"name":"token1","outputs":[{"name":"","type":"address"}],"type":"function"},
-            ]
-            ERC20_ABI = [
-                {"constant":True,"inputs":[],"name":"decimals","outputs":[{"name":"","type":"uint8"}],"type":"function"}
-            ]
-            
-            try:
-                # Get token0/token1 addresses
-                contract = w3.eth.contract(address=Web3.to_checksum_address(pool_address), abi=PAIR_ABI)
-                token0 = contract.functions.token0().call().lower()
-                token1 = contract.functions.token1().call().lower()
-                
-                self.logger.info(f"Pool tokens: token0={token0}, token1={token1}")
-                
-                # Get decimals for both tokens
-                token0_contract = w3.eth.contract(address=Web3.to_checksum_address(token0), abi=ERC20_ABI)
-                token1_contract = w3.eth.contract(address=Web3.to_checksum_address(token1), abi=ERC20_ABI)
-                decimals0 = token0_contract.functions.decimals().call()
-                decimals1 = token1_contract.functions.decimals().call()
-                
-                self.logger.info(f"Token decimals: token0={decimals0}, token1={decimals1}")
-                
-            except Exception as e:
-                self.logger.error(f"Error getting pool info: {e}")
-                return big_buys
-            
-            # Determine which token is ETH (WETH) and which is our target token
-            # WETH address: 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
-            weth_address = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2".lower()
-            
-            eth_token = None
-            target_token = None
-            eth_decimals = None
-            target_decimals = None
-            
-            if token0 == weth_address:
-                eth_token = token0
-                target_token = token1
-                eth_decimals = decimals0
-                target_decimals = decimals1
-            elif token1 == weth_address:
-                eth_token = token1
-                target_token = token0
-                eth_decimals = decimals1
-                target_decimals = decimals0
-            else:
-                self.logger.warning("No WETH found in pool, cannot analyze big buys")
-                return big_buys
-            
-            # Verify target token matches
-            if target_token != token_address.lower():
-                self.logger.warning(f"Target token {target_token} doesn't match {token_address}")
-                return big_buys
-            
-            # Decode swap events to find big buys
-            from src.pricing.event_decoder import EventDecoder
-            decoder = EventDecoder()
             
             for event in swap_events:
                 try:
-                    # Decode the swap event
-                    decoded_event = decoder.decode_swap_event(event['data'], event['topics'])
+                    # Get block number and timestamp
+                    block_number = int(event.get('blockNumber', '0'), 16)
+                    timestamp = int(event.get('timeStamp', '0'), 16)
+                    
+                    # Decode the swap event data
+                    decoded_event = self._decode_swap_event(event)
                     if not decoded_event:
                         continue
                     
-                    # Get amounts in human readable format
-                    amount0_in = decoded_event['amount0In'] / (10 ** decimals0)
-                    amount1_in = decoded_event['amount1In'] / (10 ** decimals1)
-                    amount0_out = decoded_event['amount0Out'] / (10 ** decimals0)
-                    amount1_out = decoded_event['amount1Out'] / (10 ** decimals1)
+                    # Calculate ETH amount from the swap
+                    eth_amount = self._calculate_eth_amount_from_swap(
+                        decoded_event, pool_info, token0, token1, decimals0, decimals1
+                    )
                     
-                    # Determine if this is a buy (someone buying tokens with ETH)
-                    eth_amount = 0
-                    if token0 == weth_address:
-                        # ETH is token0
-                        if amount0_in > 0 and amount1_out > 0:
-                            # Someone is buying tokens with ETH
-                            eth_amount = amount0_in
-                    else:
-                        # ETH is token1
-                        if amount1_in > 0 and amount0_out > 0:
-                            # Someone is buying tokens with ETH
-                            eth_amount = amount1_in
-                    
-                    # Check if this is a big buy
-                    if eth_amount >= threshold_eth:
+                    if eth_amount and eth_amount >= threshold_eth:
                         big_buy = {
-                            'tx_hash': event.get('transactionHash', ''),
-                            'block_number': int(event['blockNumber'], 16),
-                            'timestamp': int(event['timeStamp'], 16),
-                            'eth_amount': eth_amount,
-                            'token_amount_in': amount0_in if token0 == weth_address else amount1_in,
-                            'token_amount_out': amount1_out if token0 == weth_address else amount0_out,
-                            'from_address': decoded_event.get('sender', ''),
-                            'to_address': decoded_event.get('to', '')
+                            'blockNumber': block_number,
+                            'timestamp': timestamp,
+                            'ethAmount': eth_amount,
+                            'transactionHash': event.get('transactionHash', ''),
+                            'source': 'swap_event',
+                            'amount0In': decoded_event.get('amount0In', 0),
+                            'amount1In': decoded_event.get('amount1In', 0),
+                            'amount0Out': decoded_event.get('amount0Out', 0),
+                            'amount1Out': decoded_event.get('amount1Out', 0)
                         }
                         big_buys.append(big_buy)
-                        
+                        self.logger.info(f"Big buy detected in block {block_number}: {eth_amount:.6f} ETH")
+                
                 except Exception as e:
-                    self.logger.warning(f"Error decoding swap event: {e}")
+                    self.logger.warning(f"Error analyzing swap event: {e}")
                     continue
             
-            self.logger.info(f"Found {len(big_buys)} big buys >= {threshold_eth} ETH")
+            self.logger.info(f"Found {len(big_buys)} big buys from swap events")
             return big_buys
             
         except Exception as e:
-            self.logger.error(f"Error finding big buys: {e}")
+            self.logger.error(f"Error analyzing big buys from swap events: {e}")
             return big_buys
     
-    def find_big_buys_from_prices(self, prices: List[Dict], threshold_eth: float = 0.1) -> List[Dict]:
+    def _decode_swap_event(self, event: Dict) -> Optional[Dict]:
+        """Decode a swap event from raw event data."""
+        try:
+            # Basic swap event structure for V2
+            # Swap(address indexed sender, uint256 amount0In, uint256 amount1In, uint256 amount0Out, uint256 amount1Out, address indexed to)
+            
+            # Parse the data field (contains amount0In, amount1In, amount0Out, amount1Out)
+            data = event.get('data', '')
+            if not data or data == '0x':
+                return None
+            
+            # Remove '0x' prefix and decode
+            data = data[2:]  # Remove '0x'
+            
+            # Each parameter is 32 bytes (64 hex characters)
+            if len(data) < 256:  # 4 parameters * 64 hex chars
+                return None
+            
+            # Extract the 4 uint256 parameters
+            amount0In = int(data[0:64], 16)
+            amount1In = int(data[64:128], 16)
+            amount0Out = int(data[128:192], 16)
+            amount1Out = int(data[192:256], 16)
+            
+            return {
+                'amount0In': amount0In,
+                'amount1In': amount1In,
+                'amount0Out': amount0Out,
+                'amount1Out': amount1Out
+            }
+            
+        except Exception as e:
+            self.logger.warning(f"Error decoding swap event: {e}")
+            return None
+    
+    def _calculate_eth_amount_from_swap(self, decoded_event: Dict, pool_info: Dict, 
+                                      token0: str, token1: str, decimals0: int, decimals1: int) -> Optional[float]:
         """
-        Find big buys by analyzing price movements in existing price data.
-        This is a more efficient approach that uses already extracted data.
+        Calculate ETH amount from a swap event.
         
         Args:
-            prices: List of price data points (from PriceExtractor)
-            threshold_eth: Minimum ETH amount to consider a big buy
+            decoded_event: Decoded swap event data
+            pool_info: Pool information
+            token0: Token0 address
+            token1: Token1 address
+            decimals0: Token0 decimals
+            decimals1: Token1 decimals
             
         Returns:
-            List of potential big buy events
+            ETH amount in ETH units, or None if not a buy with ETH
+        """
+        try:
+            weth_address = self.WETH_ADDRESS.lower()
+            
+            # Get amounts in human-readable units
+            a0in = decoded_event['amount0In'] / (10 ** decimals0)
+            a1in = decoded_event['amount1In'] / (10 ** decimals1)
+            a0out = decoded_event['amount0Out'] / (10 ** decimals0)
+            a1out = decoded_event['amount1Out'] / (10 ** decimals1)
+            
+            # Determine which token is WETH
+            if token0 == weth_address:
+                # WETH is token0
+                weth_in = a0in
+                weth_out = a0out
+            elif token1 == weth_address:
+                # WETH is token1
+                weth_in = a1in
+                weth_out = a1out
+            else:
+                # WETH not in this pool
+                return None
+            
+            # Check if this is a buy (WETH going in, tokens coming out)
+            if weth_in > 0 and weth_out == 0:
+                # This is a buy with ETH/WETH
+                return weth_in
+            elif weth_out > 0 and weth_in == 0:
+                # This is a sell (WETH coming out)
+                return None
+            else:
+                # Complex swap or no clear direction
+                return None
+                
+        except Exception as e:
+            self.logger.warning(f"Error calculating ETH amount from swap: {e}")
+            return None
+    
+    def analyze_big_buys_from_transactions(self, transactions: List[Dict], 
+                                         threshold_eth: float = 0.1) -> List[Dict]:
+        """
+        Analyze regular transactions to identify big buys based on ETH value.
+        
+        Args:
+            transactions: List of transaction data
+            threshold_eth: Minimum ETH amount to consider a "big buy"
+            
+        Returns:
+            List of big buy transactions
         """
         big_buys = []
         
-        if not prices:
-            return big_buys
-        
-        self.logger.info(f"Analyzing {len(prices)} price points for big buys >= {threshold_eth} ETH")
-        
-        # Sort prices by timestamp to get chronological order
-        sorted_prices = sorted(prices, key=lambda x: x['timestamp'])
-        
-        # Look for significant price movements that could indicate big buys
-        # We'll use price volatility and volume as indicators
-        
-        for i in range(1, len(sorted_prices)):
-            current_price = sorted_prices[i]
-            previous_price = sorted_prices[i-1]
-            
-            # Calculate price change percentage
-            if previous_price['token_price_usd'] and current_price['token_price_usd']:
-                price_change = ((current_price['token_price_usd'] - previous_price['token_price_usd']) / 
-                               previous_price['token_price_usd']) * 100
-                
-                # Look for significant price increases (>10% in one block)
-                if price_change > 10:
-                    # This could be a big buy - estimate ETH amount based on price impact
-                    # This is a rough estimation - in reality we'd need the actual swap data
-                    estimated_eth = price_change / 100  # Rough estimate: 1% price change per 0.01 ETH
+        try:
+            for tx in transactions:
+                try:
+                    eth_amount = tx.get('valueETH', 0)
                     
-                    if estimated_eth >= threshold_eth:
+                    if eth_amount >= threshold_eth:
                         big_buy = {
-                            'tx_hash': f"estimated_{current_price['block_number']}",  # Placeholder
-                            'block_number': current_price['block_number'],
-                            'timestamp': current_price['timestamp'],
-                            'eth_amount': estimated_eth,
-                            'price_before': previous_price['token_price_usd'],
-                            'price_after': current_price['token_price_usd'],
-                            'price_change_percent': price_change,
-                            'estimated': True  # Flag to indicate this is an estimation
+                            'blockNumber': tx.get('blockNumber'),
+                            'timestamp': tx.get('timestamp'),
+                            'ethAmount': eth_amount,
+                            'transactionHash': tx.get('hash', ''),
+                            'source': 'direct_transaction',
+                            'from': tx.get('from', ''),
+                            'to': tx.get('to', '')
                         }
                         big_buys.append(big_buy)
-        
-        self.logger.info(f"Found {len(big_buys)} potential big buys from price analysis")
-        return big_buys
+                        self.logger.info(f"Big buy detected in transaction {tx.get('hash', '')}: {eth_amount:.6f} ETH")
+                
+                except Exception as e:
+                    self.logger.warning(f"Error analyzing transaction: {e}")
+                    continue
+            
+            self.logger.info(f"Found {len(big_buys)} big buys from direct transactions")
+            return big_buys
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing big buys from transactions: {e}")
+            return big_buys
     
-    def analyze_price_impact_5days(self, prices: List[Dict], big_buy_block: int) -> Dict:
+    def combine_big_buy_analysis(self, swap_events: List[Dict], transactions: List[Dict], 
+                                pool_info: Dict, threshold_eth: float = 0.1) -> Dict:
         """
-        Analyze price impact 5 days after a big buy.
+        Combine analysis from both swap events and direct transactions.
         
         Args:
-            prices: List of price data points
-            big_buy_block: Block number of the big buy
+            swap_events: List of swap events
+            transactions: List of direct transactions
+            pool_info: Pool information
+            threshold_eth: Minimum ETH amount for big buy
             
         Returns:
-            Dictionary with price analysis
+            Combined big buy analysis
         """
-        if not prices:
-            return {}
-        
-        # Find the big buy in the price data
-        big_buy_price = None
-        big_buy_timestamp = None
-        
-        for price in prices:
-            if price['block_number'] == big_buy_block:
-                big_buy_price = price
-                big_buy_timestamp = price['timestamp']
-                break
-        
-        if not big_buy_price or big_buy_timestamp is None:
-            return {}
-        
-        # Calculate 5 days in seconds (approximate)
-        five_days_seconds = 5 * 24 * 3600
-        
-        # Find prices within 5 days after the big buy
-        prices_after_big_buy = []
-        for price in prices:
-            if (price['timestamp'] > big_buy_timestamp and 
-                price['timestamp'] <= big_buy_timestamp + five_days_seconds):
-                prices_after_big_buy.append(price)
-        
-        if not prices_after_big_buy:
-            return {
-                'big_buy_block': big_buy_block,
-                'big_buy_timestamp': big_buy_timestamp,
-                'price_at_big_buy': big_buy_price['token_price_usd'],
-                'max_price_5d': None,
-                'min_price_5d': None,
-                'price_change_5d': None
+        try:
+            # Analyze big buys from swap events
+            swap_big_buys = self.analyze_big_buys_from_swap_events(
+                swap_events, pool_info, threshold_eth
+            )
+            
+            # Analyze big buys from direct transactions
+            tx_big_buys = self.analyze_big_buys_from_transactions(
+                transactions, threshold_eth
+            )
+            
+            # Combine and sort by block number
+            all_big_buys = swap_big_buys + tx_big_buys
+            all_big_buys.sort(key=lambda x: x.get('blockNumber', 0))
+            
+            # Calculate statistics
+            total_eth = sum(buy.get('ethAmount', 0) for buy in all_big_buys)
+            avg_eth = total_eth / len(all_big_buys) if all_big_buys else 0
+            
+            analysis = {
+                'big_buys': all_big_buys,
+                'total_big_buys': len(all_big_buys),
+                'total_eth_amount': total_eth,
+                'average_eth_amount': avg_eth,
+                'swap_event_buys': len(swap_big_buys),
+                'direct_transaction_buys': len(tx_big_buys),
+                'threshold_eth': threshold_eth
             }
-        
-        # Find max and min prices in 5 days
-        max_price = max(prices_after_big_buy, key=lambda x: x['token_price_usd'])
-        min_price = min(prices_after_big_buy, key=lambda x: x['token_price_usd'])
-        
-        # Calculate price changes
-        price_change_max = ((max_price['token_price_usd'] - big_buy_price['token_price_usd']) / 
-                           big_buy_price['token_price_usd']) * 100
-        price_change_min = ((min_price['token_price_usd'] - big_buy_price['token_price_usd']) / 
-                           big_buy_price['token_price_usd']) * 100
-        
-        return {
-            'big_buy_block': big_buy_block,
-            'big_buy_timestamp': big_buy_timestamp,
-            'price_at_big_buy': big_buy_price['token_price_usd'],
-            'max_price_5d': max_price['token_price_usd'],
-            'min_price_5d': min_price['token_price_usd'],
-            'max_price_block': max_price['block_number'],
-            'min_price_block': min_price['block_number'],
-            'price_change_max_5d': price_change_max,
-            'price_change_min_5d': price_change_min
-        }
-    
-    def get_big_buy_analysis(self, token_address: str, pool_address: str, 
-                           prices: List[Dict], threshold_eth: float = 0.1) -> Dict:
-        """
-        Complete big buy analysis for a token.
-        
-        Args:
-            token_address: Token address
-            pool_address: Pool address
-            prices: List of price data points
-            threshold_eth: Minimum ETH amount for big buy
             
-        Returns:
-            Dictionary with complete big buy analysis
-        """
-        if not prices:
-            return {}
-        
-        # Get block range from prices
-        start_block = min(p['block_number'] for p in prices)
-        end_block = max(p['block_number'] for p in prices)
-        
-        # Find big buys
-        big_buys = self.find_big_buys_in_history(token_address, pool_address, 
-                                                start_block, end_block, threshold_eth)
-        
-        # Analyze each big buy
-        big_buy_analysis = []
-        for big_buy in big_buys:
-            analysis = self.analyze_price_impact_5days(prices, big_buy['block_number'])
-            if analysis:
-                analysis['tx_hash'] = big_buy.get('tx_hash', '')
-                analysis['eth_amount'] = big_buy.get('eth_amount', 0)
-                big_buy_analysis.append(analysis)
-        
-        return {
-            'total_big_buys': len(big_buy_analysis),
-            'threshold_eth': threshold_eth,
-            'big_buys': big_buy_analysis
-        } 
-    
-    def get_big_buy_analysis_from_prices(self, prices: List[Dict], threshold_eth: float = 0.1) -> Dict:
-        """
-        Complete big buy analysis using existing price data.
-        
-        Args:
-            prices: List of price data points
-            threshold_eth: Minimum ETH amount for big buy
+            self.logger.info(f"Big buy analysis complete: {len(all_big_buys)} total big buys, {total_eth:.6f} total ETH")
+            return analysis
             
-        Returns:
-            Dictionary with complete big buy analysis
-        """
-        if not prices:
-            return {}
-        
-        # Find big buys from price data
-        big_buys = self.find_big_buys_from_prices(prices, threshold_eth)
-        
-        # Analyze each big buy
-        big_buy_analysis = []
-        for big_buy in big_buys:
-            analysis = self.analyze_price_impact_5days(prices, big_buy['block_number'])
-            if analysis:
-                analysis['tx_hash'] = big_buy.get('tx_hash', '')
-                analysis['eth_amount'] = big_buy.get('eth_amount', 0)
-                analysis['price_change_percent'] = big_buy.get('price_change_percent', 0)
-                analysis['estimated'] = big_buy.get('estimated', False)
-                big_buy_analysis.append(analysis)
-        
-        return {
-            'total_big_buys': len(big_buy_analysis),
-            'threshold_eth': threshold_eth,
-            'big_buys': big_buy_analysis
-        } 
+        except Exception as e:
+            self.logger.error(f"Error in combined big buy analysis: {e}")
+            return {
+                'big_buys': [],
+                'total_big_buys': 0,
+                'total_eth_amount': 0,
+                'average_eth_amount': 0,
+                'swap_event_buys': 0,
+                'direct_transaction_buys': 0,
+                'threshold_eth': threshold_eth,
+                'error': str(e)
+            } 

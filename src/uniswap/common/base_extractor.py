@@ -121,6 +121,8 @@ class BaseUniswapExtractor(ABC):
         Returns:
             Latest block number
         """
+        if self.w3 is None:
+            raise ValueError("Web3 instance not initialized")
         return self.w3.eth.block_number
     
     def analyze_token_complete(self, token_address: str, pool_address: str, 
@@ -141,6 +143,11 @@ class BaseUniswapExtractor(ABC):
         Returns:
             Dictionary with complete analysis
         """
+        # Store current analysis context for big buy analysis
+        self.current_pool_address = pool_address
+        self.current_start_block = start_block
+        self.current_end_block = end_block
+        
         # Extract prices using the abstract method
         prices = self.extract_prices(token_address, pool_address, start_block, end_block)
         
@@ -155,7 +162,7 @@ class BaseUniswapExtractor(ABC):
         # Calculate price statistics
         price_stats = self._calculate_price_stats(prices)
         
-        # Analyze big buys (this would need to be implemented or imported)
+        # Analyze big buys with context
         big_buy_analysis = self._analyze_big_buys(prices, threshold_eth)
         
         return {
@@ -219,7 +226,7 @@ class BaseUniswapExtractor(ABC):
     
     def _analyze_big_buys(self, prices: List[Dict], threshold_eth: float = 0.1) -> Dict:
         """
-        Analyze big buys from price data.
+        Analyze big buys from price data and swap events.
         
         Args:
             prices: List of price data points
@@ -228,10 +235,43 @@ class BaseUniswapExtractor(ABC):
         Returns:
             Dictionary with big buy analysis
         """
-        # This is a placeholder - would need to implement or import from existing big buy analyzer
-        # For now, return empty analysis
-        return {
-            'total_big_buys': 0,
-            'threshold_eth': threshold_eth,
-            'big_buys': []
-        } 
+        try:
+            from src.pricing.big_buy_analyzer import BigBuyAnalyzer
+            
+            # Create big buy analyzer
+            analyzer = BigBuyAnalyzer()
+            
+            # Get pool information for swap event analysis
+            pool_info = self.get_pool_info(self.current_pool_address) if hasattr(self, 'current_pool_address') else {}
+            
+            # Get swap events for the same time period
+            if hasattr(self, 'current_pool_address') and hasattr(self, 'current_start_block') and hasattr(self, 'current_end_block'):
+                swap_events = self.get_swap_events(
+                    self.current_pool_address, 
+                    self.current_start_block, 
+                    self.current_end_block
+                )
+            else:
+                swap_events = []
+            
+            # Get direct transactions (if available)
+            transactions = []  # This would need to be implemented or passed in
+            
+            # Analyze big buys using the new analyzer
+            big_buy_analysis = analyzer.combine_big_buy_analysis(
+                swap_events=swap_events,
+                transactions=transactions,
+                pool_info=pool_info,
+                threshold_eth=threshold_eth
+            )
+            
+            return big_buy_analysis
+            
+        except Exception as e:
+            self.logger.error(f"Error analyzing big buys: {e}")
+            return {
+                'total_big_buys': 0,
+                'threshold_eth': threshold_eth,
+                'big_buys': [],
+                'error': str(e)
+            } 
