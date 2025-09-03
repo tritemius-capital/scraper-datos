@@ -98,6 +98,23 @@ def main():
     print("This tool will extract price data and analyze big buys for a token")
     print("Supports both Uniswap V2 and V3 pools")
     
+    # Select data source
+    print("\n📡 Select data source:")
+    print("1. Etherscan API (recommended)")
+    print("2. Local Ethereum node")
+    
+    while True:
+        choice = input("\nEnter your choice (1/2): ").strip()
+        if choice == "1":
+            print("✅ Using Etherscan API")
+            break
+        elif choice == "2":
+            print("❌ Local node configuration not available yet")
+            print("Please use option 1 (Etherscan API) for now")
+            return
+        else:
+            print("Invalid choice. Please enter 1 or 2.")
+    
     # Get token address
     token_address = input("\nEnter the token address (0x...): ").strip()
     if not token_address.startswith("0x") or len(token_address) != 42:
