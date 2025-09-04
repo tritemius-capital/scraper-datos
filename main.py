@@ -169,7 +169,15 @@ def process_token_list(csv_file_path, num_blocks=648000, use_node=False):
         
         # Procesar cada token
         for index, row in df.iterrows():
-            version = row['version'].strip().lower()
+            # Manejar version como número (2, 3) y convertir a string (v2, v3)
+            version_raw = row['version']
+            if isinstance(version_raw, (int, float)):
+                version = f"v{int(version_raw)}"
+            else:
+                version = str(version_raw).strip().lower()
+                if not version.startswith('v'):
+                    version = f"v{version}"
+            
             token_name = row['nombre'].strip()
             token_address = row['nombre'].strip()  # Asumiendo que 'nombre' es la dirección
             pool_address = row['par'].strip()
