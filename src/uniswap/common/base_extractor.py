@@ -8,6 +8,8 @@ must implement. This ensures consistent interface across different Uniswap versi
 from abc import ABC, abstractmethod
 from typing import List, Dict, Optional
 import logging
+from web3 import Web3
+import os
 
 
 class BaseUniswapExtractor(ABC):
@@ -18,17 +20,30 @@ class BaseUniswapExtractor(ABC):
     It ensures consistent behavior and method signatures across different versions.
     """
     
-    def __init__(self, etherscan_api_key: str, eth_price_file: str = "historical_price_eth/eth_historical_prices_complete.csv"):
+    def __init__(self, api_key: str, eth_price_file: str = "historical_price_eth/eth_historical_prices_complete.csv", use_node: bool = False):
         """
         Initialize the base extractor.
         
         Args:
-            etherscan_api_key: API key for Etherscan
+            api_key: API key for Etherscan or Archive Node
             eth_price_file: Path to ETH historical prices file
+            use_node: If True, use Archive Node instead of Etherscan
         """
-        self.etherscan_api_key = etherscan_api_key
+        self.api_key = api_key
         self.eth_price_file = eth_price_file
+        self.use_node = use_node
         self.logger = logging.getLogger(self.__class__.__name__)
+        
+        # Initialize Web3 based on configuration
+        if use_node:
+            node_rpc_url = os.getenv('NODE_RPC_URL')
+            if not node_rpc_url:
+                raise ValueError("NODE_RPC_URL environment variable not set")
+            self._w3 = Web3(Web3.HTTPProvider(node_rpc_url))
+            self.logger.info(f"Using Archive Node at {node_rpc_url}")
+        else:
+            self._w3 = Web3(Web3.HTTPProvider("https://eth.llamarpc.com"))
+            self.logger.info("Using public RPC endpoint")
     
     @abstractmethod
     def get_pool_info(self, pool_address: str) -> Dict:
@@ -104,7 +119,6 @@ class BaseUniswapExtractor(ABC):
         pass
     
     @property
-    @abstractmethod
     def w3(self):
         """
         Web3 instance for blockchain interactions.
@@ -112,7 +126,7 @@ class BaseUniswapExtractor(ABC):
         Returns:
             Web3 instance
         """
-        pass
+        return self._w3
     
     def get_latest_block(self) -> int:
         """

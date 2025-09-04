@@ -9,9 +9,12 @@ import logging
 from typing import List, Dict, Optional
 from tqdm import tqdm
 from web3 import Web3
+from web3.contract import Contract
+import os
 
 from src.uniswap.common.base_extractor import BaseUniswapExtractor
 from src.client.etherscan_client import EtherscanClient
+from src.client.web3_client import Web3NodeClient
 from src.pricing.eth_price_reader import ETHPriceReader
 
 
@@ -51,27 +54,43 @@ class UniswapV2Extractor(BaseUniswapExtractor):
         }
     ]
 
-    def __init__(self, etherscan_api_key: str, eth_price_file: str = "historical_price_eth/eth_historical_prices_complete.csv"):
+    def __init__(self, api_key: str, eth_price_file: str = "historical_price_eth/eth_historical_prices_complete.csv", use_node: bool = False):
         """
         Initialize Uniswap V2 extractor.
         
         Args:
-            etherscan_api_key: API key for Etherscan
+            api_key: API key for Etherscan or Archive Node
             eth_price_file: Path to ETH historical prices file
+            use_node: If True, use Archive Node instead of Etherscan
         """
-        super().__init__(etherscan_api_key, eth_price_file)
-        self.etherscan_client = EtherscanClient(etherscan_api_key)
+        super().__init__(api_key, eth_price_file, use_node)
+        
+        if use_node:
+            node_rpc_url = os.getenv('NODE_RPC_URL')
+            node_api_key = os.getenv('NODE_API_KEY')
+            self.node_client = Web3NodeClient(node_rpc_url, api_key=node_api_key)
+            self.logger.info("Using Archive Node for data extraction")
+        else:
+            self.etherscan_client = EtherscanClient(api_key)
+            self.logger.info("Using Etherscan for data extraction")
+            
         self.eth_price_reader = ETHPriceReader(eth_price_file)
-        self._w3 = Web3(Web3.HTTPProvider("https://eth.llamarpc.com"))
 
     @property
     def w3(self):
         """Web3 instance for blockchain interactions."""
-        return self._w3
+        if self.use_node:
+            return self.node_client.w3
+        else:
+            # Para Etherscan, usar la instancia Web3 heredada del base_extractor
+            return self._w3
     
     @w3.setter
     def w3(self, value):
-        self._w3 = value
+        if self.use_node:
+            self.node_client.w3 = value
+        else:
+            self._w3 = value
 
     def get_pool_info(self, pool_address: str) -> Dict:
         """
@@ -205,7 +224,7 @@ class UniswapV2Extractor(BaseUniswapExtractor):
 
     def get_swap_events(self, pool_address: str, start_block: int, end_block: int) -> List[Dict]:
         """
-        Get Uniswap V2 swap events from Etherscan.
+        Get Uniswap V2 swap events from Etherscan or Archive Node.
         
         Args:
             pool_address: Pool address
@@ -216,7 +235,32 @@ class UniswapV2Extractor(BaseUniswapExtractor):
             List of raw swap events
         """
         try:
-            return self.etherscan_client.get_swap_events(pool_address, start_block, end_block, version='v2')
+            if self.use_node:
+                # Use Archive Node
+                # Create contract instance
+                contract = self.w3.eth.contract(
+                    address=Web3.to_checksum_address(pool_address),
+                    abi=self.SWAP_EVENT_ABI
+                )
+                
+                # Get swap event signature
+                swap_event_signature = self.w3.keccak(
+                    text="Swap(address,uint256,uint256,uint256,uint256,address)"
+                ).hex()
+                
+                # Get logs from node
+                logs = self.node_client.get_logs(
+                    from_block=start_block,
+                    to_block=end_block,
+                    address=pool_address,
+                    topics=[swap_event_signature]
+                )
+                
+                return logs
+            else:
+                # Use Etherscan
+                return self.etherscan_client.get_swap_events(pool_address, start_block, end_block, version='v2')
+                
         except Exception as e:
             self.logger.error(f"Error getting V2 swap events: {e}")
             return []
@@ -254,8 +298,13 @@ class UniswapV2Extractor(BaseUniswapExtractor):
                         continue
                     
                     # Get block/timestamp
-                    block_number = int(event['blockNumber'], 16)
-                    timestamp = int(event['timeStamp'], 16)
+                    if self.use_node:
+                        block_number = event['blockNumber']
+                        block = self.w3.eth.get_block(block_number)
+                        timestamp = block.timestamp
+                    else:
+                        block_number = int(event['blockNumber'], 16)
+                        timestamp = int(event['timeStamp'], 16)
                     
                     # Get ETH price at timestamp
                     eth_price_usd = self.eth_price_reader.get_eth_price_at_timestamp(timestamp)

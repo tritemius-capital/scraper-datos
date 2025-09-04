@@ -8,6 +8,7 @@ Uniswap extractor (V2 or V3) based on pool characteristics or user preference.
 import logging
 from typing import Optional
 from web3 import Web3
+import os
 
 from src.uniswap.v2.extractor import UniswapV2Extractor
 from src.uniswap.v3.extractor import UniswapV3Extractor
@@ -24,17 +25,21 @@ class UniswapExtractorFactory:
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.w3 = Web3(Web3.HTTPProvider("https://eth.llamarpc.com"))
+        # Initialize Web3 with default or node RPC URL
+        node_rpc_url = os.getenv('NODE_RPC_URL')
+        self.w3 = Web3(Web3.HTTPProvider(node_rpc_url if node_rpc_url else "https://eth.llamarpc.com"))
     
-    def create_extractor(self, version: str, etherscan_api_key: str, 
-                        eth_price_file: str = "historical_price_eth/eth_historical_prices_complete.csv") -> BaseUniswapExtractor:
+    def create_extractor(self, version: str, api_key: str, 
+                        eth_price_file: str = "historical_price_eth/eth_historical_prices_complete.csv",
+                        use_node: bool = False) -> BaseUniswapExtractor:
         """
         Create a Uniswap extractor for the specified version.
         
         Args:
             version: Uniswap version ('v2' or 'v3')
-            etherscan_api_key: API key for Etherscan
+            api_key: API key for Etherscan or Archive Node
             eth_price_file: Path to ETH historical prices file
+            use_node: If True, use Archive Node instead of Etherscan
             
         Returns:
             Appropriate Uniswap extractor instance
@@ -46,10 +51,10 @@ class UniswapExtractorFactory:
         
         if version == 'v2':
             self.logger.info("Creating Uniswap V2 extractor")
-            return UniswapV2Extractor(etherscan_api_key, eth_price_file)
+            return UniswapV2Extractor(api_key, eth_price_file, use_node=use_node)
         elif version == 'v3':
             self.logger.info("Creating Uniswap V3 extractor")
-            return UniswapV3Extractor(etherscan_api_key, eth_price_file)
+            return UniswapV3Extractor(api_key, eth_price_file, use_node=use_node)
         else:
             raise ValueError(f"Unsupported Uniswap version: {version}. Supported versions: 'v2', 'v3'")
     
@@ -103,17 +108,19 @@ class UniswapExtractorFactory:
             self.logger.warning(f"Error detecting Uniswap version for {pool_address}: {e}")
             return None
     
-    def create_auto_extractor(self, pool_address: str, etherscan_api_key: str,
+    def create_auto_extractor(self, pool_address: str, api_key: str,
                              eth_price_file: str = "historical_price_eth/eth_historical_prices_complete.csv",
-                             fallback_version: str = 'v2') -> BaseUniswapExtractor:
+                             fallback_version: str = 'v2',
+                             use_node: bool = False) -> BaseUniswapExtractor:
         """
         Create an extractor with automatic version detection.
         
         Args:
             pool_address: Address of the Uniswap pool
-            etherscan_api_key: API key for Etherscan
+            api_key: API key for Etherscan or Archive Node
             eth_price_file: Path to ETH historical prices file
             fallback_version: Version to use if detection fails (default: 'v2')
+            use_node: If True, use Archive Node instead of Etherscan
             
         Returns:
             Appropriate Uniswap extractor instance
@@ -127,4 +134,4 @@ class UniswapExtractorFactory:
             version = fallback_version
             self.logger.info(f"Using fallback Uniswap {fallback_version.upper()} for pool {pool_address}")
         
-        return self.create_extractor(version, etherscan_api_key, eth_price_file) 
+        return self.create_extractor(version, api_key, eth_price_file, use_node=use_node) 
