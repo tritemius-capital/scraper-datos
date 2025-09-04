@@ -12,6 +12,7 @@ charset-normalizer==3.4.2
 ckzg==2.1.1
 colorama==0.4.6
 cytoolz==1.0.1
+et_xmlfile==2.0.0
 eth-account==0.13.7
 eth-hash==0.7.1
 eth-keyfile==0.8.1
@@ -28,9 +29,10 @@ iniconfig==2.1.0
 jmespath==1.0.1
 log-symbols==0.0.14
 multidict==6.6.3
-numpy==2.3.1
+numpy==2.3.2
+openpyxl==3.1.5
 packaging==25.0
-pandas==2.0.3
+pandas==2.3.2
 parquet_tools==0.2.16
 parsimonious==0.10.0
 pluggy==1.6.0

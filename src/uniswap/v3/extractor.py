@@ -380,12 +380,41 @@ class UniswapV3Extractor(BaseUniswapExtractor):
                     # Calculate USD price
                     price_usd = price_eth * eth_price_usd if eth_price_usd else None
                     
+                    # Calcular volumen en USD de esta transacción
+                    amount0 = decoded_event.get('amount0', 0)
+                    amount1 = decoded_event.get('amount1', 0)
+                    
+                    # Para V3, los amounts pueden ser negativos (salida)
+                    eth_volume = max(
+                        abs(amount0) / (10 ** pool_info.get('decimals0', 18)),
+                        abs(amount1) / (10 ** pool_info.get('decimals1', 18))
+                    )
+                    usd_volume = eth_volume * eth_price_usd if eth_price_usd else None
+                    
                     price_data = {
                         'timestamp': timestamp,
                         'block_number': block_number,
+                        'transaction_hash': event.get('transactionHash', ''),
+                        
+                        # Datos de precio
                         'token_price_eth': price_eth,
                         'token_price_usd': price_usd,
-                        'eth_price_usd': eth_price_usd
+                        'eth_price_usd': eth_price_usd,
+                        
+                        # Datos de transacción detallados V3
+                        'amount0': amount0,
+                        'amount1': amount1,
+                        'sqrtPriceX96': decoded_event.get('sqrtPriceX96', 0),
+                        'liquidity': decoded_event.get('liquidity', 0),
+                        'tick': decoded_event.get('tick', 0),
+                        'sender': decoded_event.get('sender', ''),
+                        'recipient': decoded_event.get('recipient', ''),
+                        
+                        # Métricas calculadas
+                        'eth_volume': eth_volume,
+                        'usd_volume': usd_volume,
+                        'gas_used': event.get('gasUsed', ''),
+                        'gas_price': event.get('gasPrice', ''),
                     }
                     prices.append(price_data)
                     
