@@ -250,43 +250,56 @@ class BaseUniswapExtractor(ABC):
             Dictionary with big buy analysis
         """
         try:
-            from src.pricing.big_buy_analyzer import BigBuyAnalyzer
+            # Temporalmente deshabilitado para evitar errores de conversión
+            self.logger.info("Big buy analysis temporalmente deshabilitado")
             
-            # Create big buy analyzer
-            analyzer = BigBuyAnalyzer()
+            return {
+                'big_buys': [],
+                'threshold_eth': threshold_eth,
+                'total_big_buys': 0,
+                'total_eth_volume': 0.0,
+                'summary': 'Big buy analysis deshabilitado temporalmente'
+            }
             
-            # Get pool information for swap event analysis
-            pool_info = self.get_pool_info(self.current_pool_address) if hasattr(self, 'current_pool_address') else {}
+            # TODO: Arreglar el big buy analyzer
+            # from src.pricing.big_buy_analyzer import BigBuyAnalyzer
             
-            # Get swap events for the same time period
-            if hasattr(self, 'current_pool_address') and hasattr(self, 'current_start_block') and hasattr(self, 'current_end_block'):
-                swap_events = self.get_swap_events(
-                    self.current_pool_address, 
-                    self.current_start_block, 
-                    self.current_end_block
-                )
-            else:
-                swap_events = []
+            # # Create big buy analyzer
+            # analyzer = BigBuyAnalyzer()
             
-            # Get direct transactions (if available)
-            transactions = []  # This would need to be implemented or passed in
+            # # Get pool information for swap event analysis
+            # pool_info = self.get_pool_info(self.current_pool_address) if hasattr(self, 'current_pool_address') else {}
             
-            # Analyze big buys using the new analyzer with price enrichment
-            big_buy_analysis = analyzer.combine_big_buy_analysis(
-                swap_events=swap_events,
-                transactions=transactions,
-                pool_info=pool_info,
-                threshold_eth=threshold_eth,
-                prices=prices  # Pass prices for enrichment
-            )
+            # # Get swap events for the same time period
+            # if hasattr(self, 'current_pool_address') and hasattr(self, 'current_start_block') and hasattr(self, 'current_end_block'):
+            #     swap_events = self.get_swap_events(
+            #         self.current_pool_address, 
+            #         self.current_start_block, 
+            #         self.current_end_block
+            #     )
+            # else:
+            #     swap_events = []
             
-            return big_buy_analysis
+            # # Get direct transactions (if available)
+            # transactions = []  # This would need to be implemented or passed in
+            
+            # # Analyze big buys using the new analyzer with price enrichment
+            # big_buy_analysis = analyzer.combine_big_buy_analysis(
+            #     swap_events=swap_events,
+            #     transactions=transactions,
+            #     pool_info=pool_info,
+            #     threshold_eth=threshold_eth,
+            #     prices=prices  # Pass prices for enrichment
+            # )
+            
+            # return big_buy_analysis
             
         except Exception as e:
-            self.logger.error(f"Error analyzing big buys: {e}")
+            self.logger.error(f"Error in big buy analysis: {e}")
             return {
-                'total_big_buys': 0,
-                'threshold_eth': threshold_eth,
                 'big_buys': [],
+                'threshold_eth': threshold_eth,
+                'total_big_buys': 0,
+                'total_eth_volume': 0.0,
                 'error': str(e)
             } 

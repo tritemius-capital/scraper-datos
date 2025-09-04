@@ -127,20 +127,27 @@ class UniswapV2Extractor(BaseUniswapExtractor):
             self.logger.error(f"Error getting pool info for {pool_address}: {e}")
             raise
 
-    def decode_swap_event(self, event_data: str, event_topics: List[str]) -> Optional[Dict]:
+    def decode_swap_event(self, event_data: str = None, event_topics: List[str] = None, log: Dict = None, pool_info: Dict = None) -> Optional[Dict]:
         """
         Decode Uniswap V2 swap event.
         
         Args:
-            event_data: Raw event data
-            event_topics: Event topics
+            event_data: Raw event data (legacy parameter)
+            event_topics: Event topics (legacy parameter)  
+            log: Raw log entry from blockchain (new parameter)
+            pool_info: Pool information (new parameter)
             
         Returns:
-            Decoded swap event data or None if decoding fails
+            Dictionary with decoded event data
         """
         try:
-            # Create contract instance for decoding
-            contract = self.w3.eth.contract(abi=self.SWAP_EVENT_ABI)
+            # Handle both old and new parameter styles
+            if log is not None:
+                # New style - log dict with pool_info
+                event_data = log['data']
+                event_topics = log['topics']
+            elif event_data is None or event_topics is None:
+                return None
             
             # Add missing fields that web3 expects
             log_entry = {
@@ -148,26 +155,32 @@ class UniswapV2Extractor(BaseUniswapExtractor):
                 'topics': event_topics,
                 'logIndex': 0,  # Add dummy logIndex
                 'transactionIndex': 0,  # Add dummy transactionIndex
-                'transactionHash': '0x' + '0' * 64,  # Add dummy transaction hash
-                'blockHash': '0x' + '0' * 64,  # Add dummy block hash
-                'blockNumber': 0,  # Add dummy block number
-                'address': '0x' + '0' * 40,  # Add dummy address
-                'removed': False  # Add removed flag
+                'blockHash': '0x0000000000000000000000000000000000000000000000000000000000000000',  # Add dummy blockHash
+                'blockNumber': 0,  # Add dummy blockNumber
+                'address': '0x0000000000000000000000000000000000000000',  # Add dummy address
+                'transactionHash': '0x0000000000000000000000000000000000000000000000000000000000000000'  # Add dummy transactionHash
             }
             
-            # Decode the event
+            # Create contract instance for decoding
+            contract = self.w3.eth.contract(abi=self.SWAP_EVENT_ABI)
+            
+            # Process the log to decode the event
             decoded_log = contract.events.Swap().process_log(log_entry)
             
+            # Extract the arguments
+            args = decoded_log['args']
+            
             return {
-                'amount0In': decoded_log['args']['amount0In'],
-                'amount1In': decoded_log['args']['amount1In'],
-                'amount0Out': decoded_log['args']['amount0Out'],
-                'amount1Out': decoded_log['args']['amount1Out'],
-                'sender': decoded_log['args']['sender'],
-                'to': decoded_log['args']['to']
+                'sender': args['sender'],
+                'to': args['to'],
+                'amount0In': args['amount0In'],
+                'amount1In': args['amount1In'],
+                'amount0Out': args['amount0Out'],
+                'amount1Out': args['amount1Out']
             }
+            
         except Exception as e:
-            self.logger.warning(f"Error decoding V2 swap event: {e}")
+            self.logger.error(f"Error decoding V2 swap event: {e}")
             return None
 
     def calculate_token_price(self, decoded_event: Dict, pool_info: Dict, token_address: str) -> Optional[float]:
@@ -224,46 +237,56 @@ class UniswapV2Extractor(BaseUniswapExtractor):
 
     def get_swap_events(self, pool_address: str, start_block: int, end_block: int) -> List[Dict]:
         """
-        Get Uniswap V2 swap events from Etherscan or Archive Node.
+        Get swap events for a specific pool and block range
         
         Args:
-            pool_address: Pool address
+            pool_address: The pool address to get events for
             start_block: Starting block number
             end_block: Ending block number
             
         Returns:
-            List of raw swap events
+            List of swap events with decoded data
         """
-        try:
-            if self.use_node:
-                # Use Archive Node
-                # Create contract instance
-                contract = self.w3.eth.contract(
-                    address=Web3.to_checksum_address(pool_address),
-                    abi=self.SWAP_EVENT_ABI
-                )
-                
-                # Get swap event signature
-                swap_event_signature = self.w3.keccak(
-                    text="Swap(address,uint256,uint256,uint256,uint256,address)"
-                ).hex()
-                
-                # Get logs from node
-                logs = self.node_client.get_logs(
-                    from_block=start_block,
-                    to_block=end_block,
-                    address=pool_address,
-                    topics=[swap_event_signature]
-                )
-                
-                return logs
-            else:
-                # Use Etherscan
-                return self.etherscan_client.get_swap_events(pool_address, start_block, end_block, version='v2')
-                
-        except Exception as e:
-            self.logger.error(f"Error getting V2 swap events: {e}")
-            return []
+        if self.use_node:
+            # Get pool info for decoding
+            pool_info = self.get_pool_info(pool_address)
+            
+            # Get the V2 swap event signature
+            swap_event_signature = "0xd78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822"
+            
+            logs = self.node_client.get_logs(
+                from_block=start_block,
+                to_block=end_block,
+                address=pool_address,
+                topics=[swap_event_signature]
+            )
+            
+            # Decode and enrich each event
+            enriched_events = []
+            for log in logs:
+                try:
+                    # Decode the event data
+                    decoded_event = self.decode_swap_event(log=log, pool_info=pool_info)
+                    if decoded_event:
+                        # Add decoded data to the original log
+                        enriched_log = log.copy()
+                        enriched_log.update({
+                            'amount0In': decoded_event.get('amount0In', 0),
+                            'amount1In': decoded_event.get('amount1In', 0),
+                            'amount0Out': decoded_event.get('amount0Out', 0),
+                            'amount1Out': decoded_event.get('amount1Out', 0),
+                            'sender': decoded_event.get('sender', ''),
+                            'to': decoded_event.get('to', ''),
+                        })
+                        enriched_events.append(enriched_log)
+                except Exception as e:
+                    self.logger.warning(f"Error enriching swap event: {e}")
+                    # Include the original log even if we can't decode it
+                    enriched_events.append(log)
+            
+            return enriched_events
+        else:
+            return self.etherscan_client.get_swap_events(pool_address, start_block, end_block, version='v2')
 
     def extract_prices(self, token_address: str, pool_address: str, start_block: int, end_block: int) -> List[Dict]:
         """
@@ -293,7 +316,7 @@ class UniswapV2Extractor(BaseUniswapExtractor):
             for event in tqdm(swap_events, desc="Processing V2 swap events", unit="event"):
                 try:
                     # Decode the swap event
-                    decoded_event = self.decode_swap_event(event['data'], event['topics'])
+                    decoded_event = self.decode_swap_event(log=event, pool_info=pool_info)
                     if not decoded_event:
                         continue
                     

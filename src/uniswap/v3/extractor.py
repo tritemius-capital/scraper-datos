@@ -129,20 +129,27 @@ class UniswapV3Extractor(BaseUniswapExtractor):
             self.logger.error(f"Error getting V3 pool info for {pool_address}: {e}")
             raise
 
-    def decode_swap_event(self, event_data: str, event_topics: List[str]) -> Optional[Dict]:
+    def decode_swap_event(self, event_data: str = None, event_topics: List[str] = None, log: Dict = None, pool_info: Dict = None) -> Optional[Dict]:
         """
         Decode Uniswap V3 swap event.
         
         Args:
-            event_data: Raw event data
-            event_topics: Event topics
+            event_data: Raw event data (legacy parameter)
+            event_topics: Event topics (legacy parameter)
+            log: Raw log entry from blockchain (new parameter)
+            pool_info: Pool information (new parameter)
             
         Returns:
-            Decoded swap event data or None if decoding fails
+            Dictionary with decoded event data
         """
         try:
-            # Create contract instance for decoding
-            contract = self.w3.eth.contract(abi=self.SWAP_EVENT_ABI)
+            # Handle both old and new parameter styles
+            if log is not None:
+                # New style - log dict with pool_info
+                event_data = log['data']
+                event_topics = log['topics']
+            elif event_data is None or event_topics is None:
+                return None
             
             # Add missing fields that Etherscan doesn't provide
             log_entry = {
@@ -156,20 +163,27 @@ class UniswapV3Extractor(BaseUniswapExtractor):
                 'transactionHash': '0x0000000000000000000000000000000000000000000000000000000000000000'  # Add missing field
             }
             
-            # Decode the event
+            # Create contract instance for decoding
+            contract = self.w3.eth.contract(abi=self.SWAP_EVENT_ABI)
+            
+            # Process the log to decode the event
             decoded_log = contract.events.Swap().process_log(log_entry)
             
+            # Extract the arguments
+            args = decoded_log['args']
+            
             return {
-                'amount0': decoded_log['args']['amount0'],
-                'amount1': decoded_log['args']['amount1'],
-                'sqrtPriceX96': decoded_log['args']['sqrtPriceX96'],
-                'liquidity': decoded_log['args']['liquidity'],
-                'tick': decoded_log['args']['tick'],
-                'sender': decoded_log['args']['sender'],
-                'recipient': decoded_log['args']['recipient']
+                'sender': args['sender'],
+                'recipient': args['recipient'],
+                'amount0': args['amount0'],
+                'amount1': args['amount1'],
+                'sqrtPriceX96': args['sqrtPriceX96'],
+                'liquidity': args['liquidity'],
+                'tick': args['tick']
             }
+            
         except Exception as e:
-            self.logger.warning(f"Error decoding V3 swap event: {e}")
+            self.logger.error(f"Error decoding V3 swap event: {e}")
             return None
 
     def calculate_token_price(self, decoded_event: Dict, pool_info: Dict, token_address: str) -> Optional[float]:
@@ -287,46 +301,57 @@ class UniswapV3Extractor(BaseUniswapExtractor):
 
     def get_swap_events(self, pool_address: str, start_block: int, end_block: int) -> List[Dict]:
         """
-        Get Uniswap V3 swap events from Etherscan or Archive Node.
+        Get swap events for a specific pool and block range
         
         Args:
-            pool_address: Pool address
+            pool_address: The pool address to get events for
             start_block: Starting block number
             end_block: Ending block number
             
         Returns:
-            List of raw swap events
+            List of swap events with decoded data
         """
-        try:
-            if self.use_node:
-                # Use Archive Node
-                # Create contract instance
-                contract = self.w3.eth.contract(
-                    address=Web3.to_checksum_address(pool_address),
-                    abi=self.SWAP_EVENT_ABI
-                )
-                
-                # Get swap event signature
-                swap_event_signature = self.w3.keccak(
-                    text="Swap(address,address,int256,int256,uint160,uint128,int24)"
-                ).hex()
-                
-                # Get logs from node
-                logs = self.node_client.get_logs(
-                    from_block=start_block,
-                    to_block=end_block,
-                    address=pool_address,
-                    topics=[swap_event_signature]
-                )
-                
-                return logs
-            else:
-                # Use Etherscan
-                return self.etherscan_client.get_swap_events(pool_address, start_block, end_block, version='v3')
-                
-        except Exception as e:
-            self.logger.error(f"Error getting V3 swap events: {e}")
-            return []
+        if self.use_node:
+            # Get pool info for decoding
+            pool_info = self.get_pool_info(pool_address)
+            
+            # Get the V3 swap event signature
+            swap_event_signature = "0xc42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67"
+            
+            logs = self.node_client.get_logs(
+                from_block=start_block,
+                to_block=end_block,
+                address=pool_address,
+                topics=[swap_event_signature]
+            )
+            
+            # Decode and enrich each event
+            enriched_events = []
+            for log in logs:
+                try:
+                    # Decode the event data
+                    decoded_event = self.decode_swap_event(log=log, pool_info=pool_info)
+                    if decoded_event:
+                        # Add decoded data to the original log
+                        enriched_log = log.copy()
+                        enriched_log.update({
+                            'amount0': decoded_event.get('amount0', 0),
+                            'amount1': decoded_event.get('amount1', 0),
+                            'sqrtPriceX96': decoded_event.get('sqrtPriceX96', 0),
+                            'liquidity': decoded_event.get('liquidity', 0),
+                            'tick': decoded_event.get('tick', 0),
+                            'sender': decoded_event.get('sender', ''),
+                            'recipient': decoded_event.get('recipient', ''),
+                        })
+                        enriched_events.append(enriched_log)
+                except Exception as e:
+                    self.logger.warning(f"Error enriching swap event: {e}")
+                    # Include the original log even if we can't decode it
+                    enriched_events.append(log)
+            
+            return enriched_events
+        else:
+            return self.etherscan_client.get_swap_events(pool_address, start_block, end_block, version='v3')
 
     def extract_prices(self, token_address: str, pool_address: str, start_block: int, end_block: int) -> List[Dict]:
         """
@@ -356,7 +381,7 @@ class UniswapV3Extractor(BaseUniswapExtractor):
             for event in tqdm(swap_events, desc="Processing V3 swap events", unit="event"):
                 try:
                     # Decode the swap event
-                    decoded_event = self.decode_swap_event(event['data'], event['topics'])
+                    decoded_event = self.decode_swap_event(log=event, pool_info=pool_info)
                     if not decoded_event:
                         continue
                     

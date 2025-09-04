@@ -1,6 +1,8 @@
 from src.uniswap import UniswapExtractorFactory
 from src.pricing.object_csv_writer import ObjectCSVWriter
 from src.pricing.detailed_csv_writer import DetailedCSVWriter
+from src.pricing.consolidated_csv_writer import ConsolidatedCSVWriter
+from src.pricing.informe_writer import InformeWriter
 import os
 import json
 from datetime import datetime
@@ -133,7 +135,7 @@ def update_eth_historical_prices():
 
 def process_token_list(csv_file_path, num_blocks=648000, use_node=False):
     """
-    Procesa una lista de tokens desde un archivo CSV
+    Procesa una lista de tokens desde un archivo CSV actualizando un único informe
     
     Args:
         csv_file_path: Ruta al archivo CSV con formato: version,nombre,par
@@ -159,12 +161,11 @@ def process_token_list(csv_file_path, num_blocks=648000, use_node=False):
         
         print(f"📋 Procesando {len(df)} tokens del archivo {csv_file_path}")
         
-        # Crear directorio para resultados
-        results_dir = "data/batch_results"
-        os.makedirs(results_dir, exist_ok=True)
+        # Inicializar el writer del informe
+        informe_writer = InformeWriter()
+        informe_writer.initialize_file()
         
-        # Lista para consolidar todos los resultados
-        all_results = []
+        print(f"📄 Informe inicializado: data/informe.csv")
         
         # Procesar cada token
         for index, row in df.iterrows():
@@ -181,12 +182,27 @@ def process_token_list(csv_file_path, num_blocks=648000, use_node=False):
             print(f"🔧 Versión: {version.upper()}")
             print(f"{'='*60}")
             
+            # Actualizar precios ETH para cada token
+            print("🔄 Actualizando precios históricos de ETH...")
+            eth_update_success = update_eth_historical_prices()
+            if eth_update_success:
+                print("✅ Precios ETH actualizados")
+            else:
+                print("⚠️  Usando precios ETH existentes")
+            
+            # Ajustar número de bloques según la versión (V3 tiene mucha más actividad)
+            if version == 'v3':
+                adjusted_blocks = min(num_blocks, 100000)  # Máximo 100K bloques para V3 (~2 semanas)
+                print(f"⚠️  Reduciendo bloques para V3: {adjusted_blocks} bloques (~{adjusted_blocks/7200:.1f} días)")
+            else:
+                adjusted_blocks = num_blocks
+            
             try:
                 # Extraer datos para este token usando la función batch
                 result = extract_token_data_for_batch(
                     token_address=token_address,
                     pool_address=pool_address,
-                    num_blocks=num_blocks,
+                    num_blocks=adjusted_blocks,
                     uniswap_version=version,
                     use_node=use_node,
                     token_name=token_name
@@ -194,7 +210,14 @@ def process_token_list(csv_file_path, num_blocks=648000, use_node=False):
                 
                 if result:
                     print(f"✅ Token {token_name} procesado exitosamente")
-                    all_results.append(result)
+                    
+                    # Preparar datos para el informe
+                    informe_data = informe_writer.prepare_token_data(result)
+                    
+                    # Actualizar el informe
+                    informe_writer.update_or_add_token(informe_data)
+                    
+                    print(f"📄 Informe actualizado con datos del token")
                 else:
                     print(f"❌ Error procesando token {token_name}")
                     
@@ -202,57 +225,12 @@ def process_token_list(csv_file_path, num_blocks=648000, use_node=False):
                 print(f"❌ Error procesando token {token_name}: {e}")
                 continue
         
-        # Crear Excel consolidado
-        if all_results:
-            print(f"\n📊 Creando Excel consolidado con {len(all_results)} tokens...")
-            excel_path = "data/consolidated_token_analysis.xlsx"
-            create_consolidated_excel(all_results, excel_path)
-        
         print(f"\n🎉 Procesamiento completado!")
-        print(f"📁 Resultados individuales en: {results_dir}")
-        if all_results:
-            print(f"📈 Excel consolidado: data/consolidated_token_analysis.xlsx")
+        print(f"📄 Informe final: data/informe.csv")
         return True
         
     except Exception as e:
         print(f"❌ Error procesando lista de tokens: {e}")
-        return False
-
-def create_consolidated_excel(results_data, output_file="data/consolidated_analysis.xlsx"):
-    """
-    Crea un archivo Excel consolidado con todos los resultados
-    
-    Args:
-        results_data: Lista de diccionarios con los resultados de cada token
-        output_file: Ruta del archivo Excel de salida
-    """
-    import pandas as pd
-    
-    if not results_data:
-        print("⚠️  No hay datos para consolidar")
-        return False
-    
-    try:
-        # Crear DataFrame con los resultados
-        df = pd.DataFrame(results_data)
-        
-        # Crear archivo Excel con múltiples hojas
-        with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-            # Hoja principal con resumen
-            df.to_excel(writer, sheet_name='Resumen', index=False)
-            
-            # Hoja por cada token con datos detallados
-            for i, result in enumerate(results_data):
-                if 'detailed_prices' in result and result['detailed_prices']:
-                    prices_df = pd.DataFrame(result['detailed_prices'])
-                    sheet_name = f"Token_{i+1}_{result.get('token_name', 'Unknown')[:10]}"
-                    prices_df.to_excel(writer, sheet_name=sheet_name, index=False)
-        
-        print(f"✅ Excel consolidado creado: {output_file}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Error creando Excel consolidado: {e}")
         return False
 
 def extract_token_data_for_batch(token_address, pool_address, num_blocks=648000, uniswap_version=None, use_node=False, token_name="Unknown"):
@@ -326,39 +304,13 @@ def extract_token_data_for_batch(token_address, pool_address, num_blocks=648000,
             print(f"No data found or error: {result.get('error', 'Unknown error')}")
             return None
         
-        # Preparar datos para retorno
+        # NO generar archivos CSV adicionales - solo retornar datos
+        # Los datos se guardarán en el informe único
+        
+        # Preparar datos para retorno con más estructura
         prices = result.get('prices', [])
         price_stats = result.get('price_stats', {})
         big_buy_analysis = result.get('big_buy_analysis', {})
-        
-        # Guardar datos detallados usando el nuevo writer
-        detailed_writer = DetailedCSVWriter()
-        detailed_csv_path = os.path.join("data", f"detailed_{token_name.replace('0x', '')[:10]}.csv")
-        
-        detailed_writer.save_detailed_transactions(
-            prices=prices,
-            big_buy_analysis=big_buy_analysis,
-            token_address=token_address,
-            pool_address=pool_address,
-            uniswap_version=detected_version,
-            stats=price_stats,
-            output_file=detailed_csv_path
-        )
-        
-        # También guardar CSV compacto como antes (para compatibilidad)
-        csv_writer = ObjectCSVWriter()
-        csv_path = os.path.join("data", f"compact_{token_name.replace('0x', '')[:10]}.csv")
-        
-        csv_writer.save_prices_to_object_csv(
-            prices=prices,
-            output_file=csv_path,
-            token_address=token_address,
-            pool_address=pool_address,
-            uniswap_version=detected_version,
-            stats=price_stats,
-            big_buy_analysis=big_buy_analysis,
-            append=False  # Archivo individual, no append
-        )
         
         # Calcular métricas adicionales para el resumen
         big_buys_count = len(big_buy_analysis.get('big_buys', []))
@@ -366,7 +318,64 @@ def extract_token_data_for_batch(token_address, pool_address, num_blocks=648000,
         total_big_buy_usd = sum(float(buy.get('usd_value', 0)) for buy in big_buy_analysis.get('big_buys', []) if buy.get('usd_value'))
         avg_big_buy_eth = total_big_buy_eth / max(1, big_buys_count)
         
-        # Actualizar resumen del token con métricas adicionales
+        # Preparar swaps para JSON (últimos 50 swaps para no saturar)
+        swaps_for_json = []
+        for i, price_point in enumerate(prices[-50:]):  # Últimos 50 swaps
+            swap_data = {
+                "ts": price_point.get('timestamp', 0),
+                "tx": price_point.get('transaction_hash', ''),
+                "block": price_point.get('block_number', 0),
+                "price_eth": price_point.get('token_price_eth', 0),
+                "price_usd": price_point.get('token_price_usd', 0),
+                "eth_volume": price_point.get('eth_volume', 0),
+                "usd_volume": price_point.get('usd_volume', 0)
+            }
+            swaps_for_json.append(swap_data)
+        
+        # Preparar big buys para JSON
+        big_buys_for_json = []
+        for buy in big_buy_analysis.get('big_buys', []):
+            big_buy_data = {
+                "ts": buy.get('timestamp', 0),
+                "tx": buy.get('transactionHash', ''),
+                "block": buy.get('blockNumber', 0),
+                "buyer": buy.get('from', ''),
+                "eth_amount": buy.get('ethAmount', 0),
+                "token_amount": buy.get('tokenAmount', 0),
+                "usd_value": buy.get('usd_value', 0),
+                "price_eth": buy.get('price_eth', 0)
+            }
+            big_buys_for_json.append(big_buy_data)
+        
+        # Preparar price summary para JSON
+        price_summary_for_json = {
+            "first": {
+                "price_usd": prices[0].get('token_price_usd', 0) if prices else 0,
+                "price_eth": prices[0].get('token_price_eth', 0) if prices else 0,
+                "timestamp": prices[0].get('timestamp', 0) if prices else 0,
+                "block": prices[0].get('block_number', 0) if prices else 0
+            },
+            "last": {
+                "price_usd": prices[-1].get('token_price_usd', 0) if prices else 0,
+                "price_eth": prices[-1].get('token_price_eth', 0) if prices else 0,
+                "timestamp": prices[-1].get('timestamp', 0) if prices else 0,
+                "block": prices[-1].get('block_number', 0) if prices else 0
+            },
+            "min": {
+                "price_usd": price_stats.get('lowest_price_usd', 0),
+                "price_eth": min((p.get('token_price_eth', float('inf')) for p in prices), default=0),
+                "timestamp": 0,  # TODO: encontrar timestamp del mínimo
+                "block": 0       # TODO: encontrar bloque del mínimo
+            },
+            "max": {
+                "price_usd": price_stats.get('highest_price_usd', 0),
+                "price_eth": max((p.get('token_price_eth', 0) for p in prices), default=0),
+                "timestamp": 0,  # TODO: encontrar timestamp del máximo
+                "block": 0       # TODO: encontrar bloque del máximo
+            }
+        }
+        
+        # Crear resumen del token con datos estructurados para JSON
         token_summary = {
             'token_name': token_name,
             'token_address': token_address,
@@ -377,7 +386,7 @@ def extract_token_data_for_batch(token_address, pool_address, num_blocks=648000,
             'end_block': end_block,
             'analysis_timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             
-            # Métricas de precio
+            # Métricas de precio (campos atómicos)
             'total_swaps': price_stats.get('total_swaps', 0),
             'current_price_usd': price_stats.get('current_price_usd'),
             'lowest_price_usd': price_stats.get('lowest_price_usd'),
@@ -385,21 +394,18 @@ def extract_token_data_for_batch(token_address, pool_address, num_blocks=648000,
             'price_change_from_low_pct': f"{price_stats.get('price_change_from_low', 0):.2f}%",
             'price_change_from_high_pct': f"{price_stats.get('price_change_from_high', 0):.2f}%",
             
-            # Métricas de big buys
+            # Métricas de big buys (campos atómicos)
             'big_buys_count': big_buys_count,
             'total_big_buy_eth': f"{total_big_buy_eth:.6f}",
             'total_big_buy_usd': f"{total_big_buy_usd:.2f}",
             'avg_big_buy_eth': f"{avg_big_buy_eth:.6f}",
             'largest_big_buy_eth': f"{max((float(buy.get('ethAmount', 0)) for buy in big_buy_analysis.get('big_buys', [])), default=0):.6f}",
             
-            # Archivos generados
-            'detailed_csv_file': detailed_csv_path,
-            'compact_csv_file': csv_path,
-            'summary_csv_file': detailed_csv_path.replace('.csv', '_summary.csv'),
-            
-            # Datos para Excel (mantener para compatibilidad)
-            'detailed_prices': prices,
-            'big_buy_analysis': big_buy_analysis
+            # Datos estructurados para JSON objects
+            'swaps_data': swaps_for_json,
+            'big_buys_data': big_buys_for_json,
+            'price_summary_data': price_summary_for_json,
+            'raw_prices': prices,  # Para análisis adicional si se necesita
         }
         
         # Show summary
@@ -423,9 +429,9 @@ def extract_token_data_for_batch(token_address, pool_address, num_blocks=648000,
                 print(f"  ... y {len(big_buys) - 5} más")
         
         print(f"\n📁 Archivos generados:")
-        print(f"   • Datos detallados: {detailed_csv_path}")
-        print(f"   • Resumen: {detailed_csv_path.replace('.csv', '_summary.csv')}")
-        print(f"   • Formato compacto: {csv_path}")
+        print(f"   • Datos detallados: (no generados)")
+        print(f"   • Resumen: (no generado)")
+        print(f"   • Formato compacto: (no generado)")
         return token_summary
         
     except Exception as e:
@@ -560,60 +566,48 @@ def main():
         print("   • Modo individual: python3 main.py")
         print("   • Modo batch: python3 main.py lista.csv")
     
-    # Actualizar precios históricos de ETH
+    # Actualizar precios históricos de ETH se hará en cada iteración de token
+    # print(f"\n{'='*60}")
+    # print("📈 PASO 1: Actualizando precios históricos de ETH")
+    # print(f"{'='*60}")
+    
+    # eth_update_success = update_eth_historical_prices()
+    # if not eth_update_success:
+    #     print("⚠️  Continuando sin actualizar precios ETH (usando datos existentes)")
+    
+    # Seleccionar fuente de datos automáticamente
     print(f"\n{'='*60}")
-    print("📈 PASO 1: Actualizando precios históricos de ETH")
+    print("📡 PASO 1: Seleccionando fuente de datos automáticamente")
     print(f"{'='*60}")
     
-    eth_update_success = update_eth_historical_prices()
-    if not eth_update_success:
-        print("⚠️  Continuando sin actualizar precios ETH (usando datos existentes)")
+    use_node = False
     
-    # Select data source
-    print(f"\n{'='*60}")
-    print("📡 PASO 2: Seleccionar fuente de datos")
-    print(f"{'='*60}")
-    print("1. Archive Node (recommended)")
-    print("2. Etherscan API (fallback)")
-    
-    while True:
-        choice = input("\nEnter your choice (1/2): ").strip()
-        if choice == "1":
-            if not all([os.getenv('NODE_API_KEY'), os.getenv('NODE_RPC_URL')]):
-                print("❌ Archive node configuration not found in .env file")
-                print("Please configure NODE_API_KEY and NODE_RPC_URL first")
-                return
-            
-            # Probar conectividad del nodo Archive
-            print("\n🔧 Verificando conectividad del nodo Archive...")
-            if not test_node_connectivity():
-                print("❌ No se pudo conectar al nodo Archive")
-                print("💡 Sugerencias:")
-                print("   1. Verifica que las URLs tengan https:// al principio")
-                print("   2. Verifica que el API key sea correcto")
-                print("   3. Verifica que el nodo esté funcionando")
-                print("   4. Prueba usar Etherscan como alternativa (opción 2)")
-                return
-            
-            print("✅ Using Archive Node")
+    # Intentar usar Archive Node primero
+    if all([os.getenv('NODE_API_KEY'), os.getenv('NODE_RPC_URL')]):
+        print("🔧 Verificando conectividad del nodo Archive...")
+        if test_node_connectivity():
+            print("✅ Usando Archive Node (recomendado)")
             use_node = True
-            break
-        elif choice == "2":
-            if not os.getenv('ETHERSCAN_API_KEY'):
-                print("❌ Etherscan API key not found in .env file")
-                print("Please configure ETHERSCAN_API_KEY first")
-                return
-            print("✅ Using Etherscan API")
-            use_node = False
-            break
         else:
-            print("Invalid choice. Please enter 1 or 2.")
+            print("❌ Archive Node no disponible, usando Etherscan como fallback")
+    else:
+        print("⚠️  Configuración de Archive Node no encontrada")
+    
+    # Fallback a Etherscan si es necesario
+    if not use_node:
+        if os.getenv('ETHERSCAN_API_KEY'):
+            print("✅ Usando Etherscan API como fallback")
+            use_node = False
+        else:
+            print("❌ ERROR: No hay configuración válida para ninguna fuente de datos")
+            print("�� Configura NODE_API_KEY + NODE_RPC_URL o ETHERSCAN_API_KEY en .env")
+            return
     
     # Procesar según el modo
     if csv_file:
         # Modo BATCH
         print(f"\n{'='*60}")
-        print("📊 PASO 3: Procesamiento BATCH")
+        print("📊 PASO 2: Procesamiento BATCH")
         print(f"{'='*60}")
         
         success = process_token_list(csv_file, num_blocks=648000, use_node=use_node)
@@ -625,7 +619,7 @@ def main():
     else:
         # Modo INDIVIDUAL (código existente)
         print(f"\n{'='*60}")
-        print("📊 PASO 3: Análisis individual")
+        print("📊 PASO 2: Análisis individual")
         print(f"{'='*60}")
         
         # Get token address

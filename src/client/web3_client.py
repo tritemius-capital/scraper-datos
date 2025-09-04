@@ -20,14 +20,14 @@ class Web3NodeClient:
     Cliente para conectarse a un nodo propio de Ethereum
     """
     
-    def __init__(self, node_url: str, timeout: int = 30, api_key: Optional[str] = None):
+    def __init__(self, node_url: str, timeout: int = 120, api_key: Optional[str] = None):
         """
-        Inicializa el cliente web3
+        Initialize Web3 client for Archive Node
         
         Args:
-            node_url: URL del nodo (ej: https://tu-nodo.com)
-            timeout: Timeout en segundos para las peticiones
-            api_key: API key para autenticación (opcional)
+            node_url: Archive node RPC URL
+            timeout: Request timeout in seconds (increased for V3)
+            api_key: API key for authentication
         """
         self.node_url = node_url
         self.api_key = api_key
@@ -211,10 +211,10 @@ class Web3NodeClient:
                 request_url = node_url
             
             response = requests.post(
-                request_url,
+                request_url,  # Usar la URL con API key, no self.node_url
                 json=payload,
                 headers={'Content-Type': 'application/json'},
-                timeout=30
+                timeout=120  # Aumentado para V3 que tiene más datos
             )
             
             if response.status_code != 200:

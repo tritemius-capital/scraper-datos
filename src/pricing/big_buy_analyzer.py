@@ -99,17 +99,38 @@ class BigBuyAnalyzer:
         """Decode a swap event from raw event data (supports both V2 and V3)."""
         try:
             # Check if this is V2 or V3 based on the number of topics
-            # V2: Swap(address, uint256, uint256, uint256, uint256, address) - 3 topics
-            # V3: Swap(address, address, int256, int256, uint160, uint128, int24) - 3 topics
-            
             topics = event.get('topics', [])
             data = event.get('data', '')
             
+            # First, check if the event already has decoded data (from our extractors)
+            if 'amount0In' in event or 'amount1In' in event:
+                # V2 format - already decoded
+                return {
+                    'version': 'v2',
+                    'amount0In': event.get('amount0In', 0),
+                    'amount1In': event.get('amount1In', 0),
+                    'amount0Out': event.get('amount0Out', 0),
+                    'amount1Out': event.get('amount1Out', 0)
+                }
+            
+            if 'amount0' in event or 'amount1' in event:
+                # V3 format - already decoded
+                return {
+                    'version': 'v3',
+                    'amount0': event.get('amount0', 0),
+                    'amount1': event.get('amount1', 0)
+                }
+            
+            # If not already decoded, try to decode from raw data
             if not data or data == '0x':
                 return None
             
             # Remove '0x' prefix and decode
-            data = data[2:]  # Remove '0x'
+            if isinstance(data, str) and data.startswith('0x'):
+                data = data[2:]  # Remove '0x'
+            else:
+                # If data is not a hex string, we can't decode it this way
+                return None
             
             # Try V2 format first (4 uint256 parameters)
             if len(data) >= 256:  # 4 parameters * 64 hex chars
@@ -126,8 +147,8 @@ class BigBuyAnalyzer:
                         'amount0Out': amount0Out,
                         'amount1Out': amount1Out
                     }
-                except:
-                    pass
+                except Exception as e:
+                    self.logger.debug(f"Failed to decode as V2: {e}")
             
             # Try V3 format (2 int256 parameters + others)
             if len(data) >= 128:  # At least 2 parameters * 64 hex chars
@@ -152,13 +173,13 @@ class BigBuyAnalyzer:
                         'amount0': amount0,
                         'amount1': amount1
                     }
-                except:
-                    pass
+                except Exception as e:
+                    self.logger.debug(f"Failed to decode as V3: {e}")
             
             return None
             
         except Exception as e:
-            self.logger.warning(f"Error decoding swap event: {e}")
+            self.logger.warning(f"Error analyzing swap event: {e}")
             return None
     
     def _calculate_eth_amount_from_swap(self, decoded_event: Dict, pool_info: Dict, 
