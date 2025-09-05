@@ -14,7 +14,7 @@ import os
 
 from src.uniswap.common.base_extractor import BaseUniswapExtractor
 from src.client.etherscan_client import EtherscanClient
-from src.client.web3_client import Web3NodeClient
+from src.client.web3_client import Web3Client
 from src.pricing.eth_price_reader import ETHPriceReader
 
 
@@ -68,7 +68,7 @@ class UniswapV2Extractor(BaseUniswapExtractor):
         if use_node:
             node_rpc_url = os.getenv('NODE_RPC_URL')
             node_api_key = os.getenv('NODE_API_KEY')
-            self.node_client = Web3NodeClient(node_rpc_url, api_key=node_api_key)
+            self.node_client = Web3Client()
             self.logger.info("Using Archive Node for data extraction")
         else:
             self.etherscan_client = EtherscanClient(api_key)
@@ -323,6 +323,9 @@ class UniswapV2Extractor(BaseUniswapExtractor):
                     # Get block/timestamp
                     if self.use_node:
                         block_number = event['blockNumber']
+                        # Handle both int and hex string formats
+                        if isinstance(block_number, str):
+                            block_number = int(block_number, 16)
                         block = self.w3.eth.get_block(block_number)
                         timestamp = block.timestamp
                     else:

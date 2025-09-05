@@ -186,8 +186,10 @@ class BaseUniswapExtractor(ABC):
         
         # Extract prices using the abstract method
         prices = self.extract_prices(token_address, pool_address, start_block, end_block)
+        self.logger.info(f"Extracted {len(prices)} prices in analyze_token_complete")
         
         if not prices:
+            self.logger.error("No prices found in analyze_token_complete")
             return {
                 'prices': [],
                 'price_stats': {},
@@ -196,17 +198,23 @@ class BaseUniswapExtractor(ABC):
             }
         
         # Calculate price statistics
+        self.logger.info("Calculating price statistics...")
         price_stats = self._calculate_price_stats(prices)
+        self.logger.info(f"Price stats calculated: {len(price_stats)} stats")
         
         # Analyze big buys with context
+        self.logger.info(f"Analyzing big buys with threshold {threshold_eth} ETH...")
         big_buy_analysis = self._analyze_big_buys(prices, threshold_eth)
+        self.logger.info(f"Big buy analysis completed")
         
-        return {
+        result = {
             'prices': prices,
             'price_stats': price_stats,
             'big_buy_analysis': big_buy_analysis,
             'error': None
         }
+        self.logger.info("analyze_token_complete completed successfully")
+        return result
     
     def _calculate_price_stats(self, prices: List[Dict]) -> Dict:
         """

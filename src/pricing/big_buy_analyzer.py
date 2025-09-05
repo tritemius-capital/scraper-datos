@@ -56,8 +56,19 @@ class BigBuyAnalyzer:
             for event in swap_events:
                 try:
                     # Get block number and timestamp
-                    block_number = int(event.get('blockNumber', '0'), 16)
-                    timestamp = int(event.get('timeStamp', '0'), 16)
+                    block_number_raw = event.get('blockNumber', '0')
+                    timestamp_raw = event.get('timeStamp', '0')
+                    
+                    # Handle both int and hex string formats
+                    if isinstance(block_number_raw, str):
+                        block_number = int(block_number_raw, 16)
+                    else:
+                        block_number = block_number_raw
+                        
+                    if isinstance(timestamp_raw, str):
+                        timestamp = int(timestamp_raw, 16)
+                    else:
+                        timestamp = timestamp_raw
                     
                     # Decode the swap event data
                     decoded_event = self._decode_swap_event(event)

@@ -1,5 +1,4 @@
 from web3 import Web3, HTTPProvider
-from web3.middleware import geth_poa_middleware
 import logging
 from typing import Optional, Dict, List, Any, Union
 from hexbytes import HexBytes
@@ -14,14 +13,19 @@ class Web3Client:
         if not NODE_RPC_URL or not NODE_API_KEY:
             raise ValueError("NODE_RPC_URL and NODE_API_KEY must be set in .env")
         
-        # Add API key to headers if needed
-        headers = {"Authorization": f"Bearer {NODE_API_KEY}"}
+        # Add API key to URL (Google Cloud Blockchain Node Engine format)
+        rpc_url_with_key = f"{NODE_RPC_URL}?key={NODE_API_KEY}"
         
         # Initialize Web3 with the node's RPC endpoint
-        self.w3 = Web3(HTTPProvider(NODE_RPC_URL, request_kwargs={"headers": headers}))
+        self.w3 = Web3(HTTPProvider(rpc_url_with_key))
         
-        # Add middleware for POA chains (if needed)
-        self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+        # Try to add POA middleware if available (for some networks)
+        try:
+            from web3.middleware import geth_poa_middleware
+            self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+        except ImportError:
+            # POA middleware not available in this web3 version, skip it
+            logger.debug("POA middleware not available, skipping")
         
         # Test connection
         if not self.w3.is_connected():

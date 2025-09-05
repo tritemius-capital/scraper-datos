@@ -15,7 +15,7 @@ import os
 
 from src.uniswap.common.base_extractor import BaseUniswapExtractor
 from src.client.etherscan_client import EtherscanClient
-from src.client.web3_client import Web3NodeClient
+from src.client.web3_client import Web3Client
 from src.pricing.eth_price_reader import ETHPriceReader
 
 
@@ -70,7 +70,7 @@ class UniswapV3Extractor(BaseUniswapExtractor):
         if use_node:
             node_rpc_url = os.getenv('NODE_RPC_URL')
             node_api_key = os.getenv('NODE_API_KEY')
-            self.node_client = Web3NodeClient(node_rpc_url, api_key=node_api_key)
+            self.node_client = Web3Client()
             self.logger.info("Using Archive Node for data extraction")
         else:
             self.etherscan_client = EtherscanClient(api_key)
@@ -145,23 +145,38 @@ class UniswapV3Extractor(BaseUniswapExtractor):
         try:
             # Handle both old and new parameter styles
             if log is not None:
-                # New style - log dict with pool_info
-                event_data = log['data']
-                event_topics = log['topics']
-            elif event_data is None or event_topics is None:
+                # New style - log dict with pool_info (from Archive Node)
+                if 'data' in log and 'topics' in log:
+                    # Archive Node provides complete log, use it directly
+                    log_entry = log
+                else:
+                    # Fallback for incomplete logs
+                    event_data = log.get('data', '')
+                    event_topics = log.get('topics', [])
+                    log_entry = {
+                        'data': event_data,
+                        'topics': event_topics,
+                        'logIndex': log.get('logIndex', 0),
+                        'transactionIndex': log.get('transactionIndex', 0),
+                        'blockHash': log.get('blockHash', '0x0000000000000000000000000000000000000000000000000000000000000000'),
+                        'blockNumber': log.get('blockNumber', 0),
+                        'address': log.get('address', '0x0000000000000000000000000000000000000000'),
+                        'transactionHash': log.get('transactionHash', '0x0000000000000000000000000000000000000000000000000000000000000000')
+                    }
+            elif event_data is not None and event_topics is not None:
+                # Legacy style - construct log entry from separate data and topics
+                log_entry = {
+                    'data': event_data,
+                    'topics': event_topics,
+                    'logIndex': 0,
+                    'transactionIndex': 0,
+                    'blockHash': '0x0000000000000000000000000000000000000000000000000000000000000000',
+                    'blockNumber': 0,
+                    'address': '0x0000000000000000000000000000000000000000',
+                    'transactionHash': '0x0000000000000000000000000000000000000000000000000000000000000000'
+                }
+            else:
                 return None
-            
-            # Add missing fields that Etherscan doesn't provide
-            log_entry = {
-                'data': event_data,
-                'topics': event_topics,
-                'logIndex': 0,  # Add missing field
-                'transactionIndex': 0,  # Add missing field
-                'blockHash': '0x0000000000000000000000000000000000000000000000000000000000000000',  # Add missing field
-                'blockNumber': 0,  # Add missing field
-                'address': '0x0000000000000000000000000000000000000000',  # Add missing field
-                'transactionHash': '0x0000000000000000000000000000000000000000000000000000000000000000'  # Add missing field
-            }
             
             # Create contract instance for decoding
             contract = self.w3.eth.contract(abi=self.SWAP_EVENT_ABI)
@@ -388,6 +403,9 @@ class UniswapV3Extractor(BaseUniswapExtractor):
                     # Get block/timestamp
                     if self.use_node:
                         block_number = event['blockNumber']
+                        # Handle both int and hex string formats
+                        if isinstance(block_number, str):
+                            block_number = int(block_number, 16)
                         block = self.w3.eth.get_block(block_number)
                         timestamp = block.timestamp
                     else:
@@ -395,7 +413,7 @@ class UniswapV3Extractor(BaseUniswapExtractor):
                         timestamp = int(event['timeStamp'], 16)
                     
                     # Get ETH price at timestamp
-                    eth_price_usd = self.eth_price_reader.get_eth_price_at_timestamp(timestamp)
+                    eth_price_usd = self.eth_price_reader.get_eth_price(timestamp=timestamp)
                     
                     # Calculate token price
                     price_eth = self.calculate_token_price(decoded_event, pool_info, token_address)

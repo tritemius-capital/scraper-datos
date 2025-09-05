@@ -4,10 +4,15 @@ Ethereum Token Price Extractor & Big Buy Analyzer
 
 This tool extracts historical price data for ERC-20 tokens from Uniswap pools
 and analyzes big buy patterns. Supports both Uniswap V2 and V3.
+
+Usage:
+  python3 main.py                    # Interactive CLI mode
+  python3 main.py tokens.csv         # Batch process tokens from CSV
 """
 
 import sys
 import os
+import pandas as pd
 from src.uniswap import UniswapExtractorFactory
 from src.pricing.object_csv_writer import ObjectCSVWriter
 from src.client.web3_client import Web3Client
@@ -28,13 +33,9 @@ def get_data_source_choice():
         else:
             print("Invalid choice. Please enter 1 or 2.")
 
-def main():
-    print("=== Ethereum Token Price Extractor & Big Buy Analyzer ===")
-    print("This tool will extract price data and analyze big buys for a token")
-    print("Supports both Uniswap V2 and V3 pools")
-    
-    # Get data source choice
-    data_source = get_data_source_choice()
+def process_single_token_interactive(data_source: str):
+    """Process a single token interactively"""
+    use_node = (data_source == "node")
     
     if data_source == "node":
         # Check if node is properly configured
@@ -45,11 +46,9 @@ def main():
         
         print("✅ Using Archive Node for data extraction")
         print("📈 ETH prices will be fetched live from Chainlink oracle")
-        use_node = True
     else:
         print("✅ Using Etherscan API for data extraction")
         print("📊 ETH prices will be read from CSV file")
-        use_node = False
     
     # Get user inputs
     print("\n" + "="*60)
@@ -96,20 +95,92 @@ def main():
         print("Analysis cancelled.")
         return
     
+    # Process the token
+    process_token(token_address, pool_address, version, num_blocks, data_source, 1, 1)
+
+def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int):
+    """Process all tokens from CSV file"""
+    
+    print(f"\n=== Processing tokens from {csv_file} ===")
+    
+    # Read CSV file
     try:
-        print(f"\n=== Extracting data for token {token_address} ===")
-        print(f"Pool: {pool_address}")
-        print(f"Blocks to analyze: {num_blocks}")
-        print(f"Using Uniswap {version.upper() if version != 'auto' else 'Auto-detect'}")
-        print(f"Data source: {'Archive Node' if use_node else 'Etherscan API'}")
+        df = pd.read_csv(csv_file)
+        print(f"📊 Found {len(df)} tokens to process")
+    except Exception as e:
+        print(f"❌ Error reading CSV file: {e}")
+        return
+    
+    # Create output directory
+    os.makedirs('data', exist_ok=True)
+    
+    # Process each token
+    results = []
+    
+    for index, row in df.iterrows():
+        try:
+            version = row['version'].lower()
+            token_address = row['nombre']  # Token address
+            pool_address = row['par']      # Pool address
+            
+            print(f"\n{'='*60}")
+            print(f"Processing token {index + 1}/{len(df)}")
+            
+            result = process_token(token_address, pool_address, version, num_blocks, data_source, index + 1, len(df))
+            if result:
+                results.append(result)
+                
+        except Exception as e:
+            print(f"❌ Error processing token {index + 1}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
+    
+    # Save all results
+    if results:
+        output_file = 'data/batch_token_analysis.csv'
+        print(f"\n💾 Saving {len(results)} results to {output_file}")
+        csv_writer = ObjectCSVWriter()
         
+        # Save each result individually
+        for i, result in enumerate(results):
+            append_mode = i > 0  # First write overwrites, subsequent writes append
+            csv_writer.save_prices_to_object_csv(
+                prices=result['prices'],
+                output_file=output_file,
+                token_address=result['token_address'],
+                pool_address=result['pool_address'],
+                uniswap_version=result['uniswap_version'],
+                stats=result.get('price_stats', {}),
+                big_buy_analysis={'big_buys': result.get('big_buys', [])},
+                append=append_mode
+            )
+        
+        print(f"✅ Results saved successfully!")
+        print(f"📁 Check the file: {output_file}")
+    else:
+        print("❌ No results to save")
+
+def process_token(token_address: str, pool_address: str, version: str, num_blocks: int, 
+                 data_source: str, current_index: int = 1, total_count: int = 1):
+    """Process a single token and return the analysis data"""
+    
+    use_node = (data_source == "node")
+    web3_client = None
+    
+    print(f"🪙 Token: {token_address}")
+    print(f"🏊 Pool: {pool_address}")
+    print(f"📦 Version: {version.upper()}")
+    
+    try:
         # Initialize Web3Client if using node
-        web3_client = None
         if use_node:
             try:
-                print("🔗 Connecting to Archive Node...")
+                if current_index == 1:  # Only show connection message for first token
+                    print("🔗 Connecting to Archive Node...")
                 web3_client = Web3Client()
-                print(f"✅ Connected to Archive Node")
+                if current_index == 1:
+                    print(f"✅ Connected to Archive Node")
             except Exception as e:
                 print(f"❌ Failed to connect to Archive Node: {e}")
                 print("Falling back to Etherscan API...")
@@ -126,7 +197,7 @@ def main():
             api_key = os.getenv("ETHERSCAN_API_KEY")
             if not api_key:
                 print("❌ ETHERSCAN_API_KEY not found in environment variables")
-                return
+                return None
             extractor = factory.create_extractor(version, api_key)
         
         # Get latest block and calculate range
@@ -134,8 +205,7 @@ def main():
         start_block = latest_block - num_blocks
         end_block = latest_block
         
-        print(f"\nAnalyzing blocks {start_block} to {end_block}")
-        print("Extracting swap events and analyzing big buys...")
+        print(f"📦 Analyzing blocks {start_block} to {end_block}")
         
         # Run the complete analysis
         result = extractor.analyze_token_complete(
@@ -146,17 +216,17 @@ def main():
             threshold_eth=0.1  # Big buys >= 0.1 ETH
         )
         
-        if not result or 'error' in result:
-            print(f"❌ Analysis failed. Check the error messages above.")
-            if result and 'error' in result:
+        if not result or result.get('error'):
+            print(f"❌ Analysis failed for token {token_address}")
+            if result and result.get('error'):
                 print(f"Error: {result['error']}")
-            return
+            return None
         
         # Display results
         prices = result.get('prices', [])
         big_buy_analysis = result.get('big_buy_analysis', {})
         
-        print(f"\n✅ Analysis completed successfully!")
+        print(f"✅ Analysis completed!")
         print(f"📊 Price points extracted: {len(prices)}")
         
         if isinstance(big_buy_analysis, dict):
@@ -167,28 +237,51 @@ def main():
             print(f"💎 Total big buy volume: {total_eth_volume:.6f} ETH")
             
             if big_buys:
-                print("\n📈 Top big buys:")
-                for i, buy in enumerate(big_buys[:5]):
+                print("📈 Top big buys:")
+                for i, buy in enumerate(big_buys[:3]):  # Show top 3
                     eth_amount = buy.get('ethAmount', 0)
                     usd_value = buy.get('usdValue', 0)
                     block = buy.get('blockNumber', 'N/A')
                     print(f"  {i+1}. Block {block}: {eth_amount:.6f} ETH (${usd_value:.2f})")
         
-        # Save to CSV
-        print(f"\n💾 Saving results to data/token_analysis.csv...")
+        # For single token mode, save immediately
+        if total_count == 1:
+            print(f"\n💾 Saving results to data/token_analysis.csv...")
+            os.makedirs('data', exist_ok=True)
+            csv_writer = ObjectCSVWriter()
+            
+            analysis_data = {
+                'token_address': token_address,
+                'token_name': token_address,
+                'pool_address': pool_address,
+                'uniswap_version': version.upper(),
+                'start_block': start_block,
+                'end_block': end_block,
+                'prices': prices,
+                'big_buys': big_buy_analysis.get('big_buys', []) if isinstance(big_buy_analysis, dict) else [],
+                'price_stats': result.get('price_stats', {}),
+                'data_source': 'archive_node' if use_node else 'etherscan_api'
+            }
+            
+            csv_writer.save_prices_to_object_csv(
+                prices=analysis_data['prices'],
+                output_file='data/token_analysis.csv',
+                token_address=analysis_data['token_address'],
+                pool_address=analysis_data['pool_address'],
+                uniswap_version=analysis_data['uniswap_version'],
+                stats=analysis_data.get('price_stats', {}),
+                big_buy_analysis={'big_buys': analysis_data.get('big_buys', [])},
+                append=True
+            )
+            print("✅ Results saved successfully!")
+            print(f"📁 Check the file: data/token_analysis.csv")
         
-        # Create data directory if it doesn't exist
-        os.makedirs('data', exist_ok=True)
-        
-        # Use ObjectCSVWriter to save in the specified format
-        csv_writer = ObjectCSVWriter('data/token_analysis.csv')
-        
-        # Prepare data for CSV writer
-        analysis_data = {
+        # Return data for batch processing
+        return {
             'token_address': token_address,
-            'token_name': token_address,  # Could be enhanced to get actual name
+            'token_name': token_address,
             'pool_address': pool_address,
-            'uniswap_version': extractor.get_version(),
+            'uniswap_version': version.upper(),
             'start_block': start_block,
             'end_block': end_block,
             'prices': prices,
@@ -197,17 +290,77 @@ def main():
             'data_source': 'archive_node' if use_node else 'etherscan_api'
         }
         
-        csv_writer.save_prices_to_object_csv([analysis_data], append_mode=True)
-        
-        print("✅ Results saved successfully!")
-        print(f"📁 Check the file: data/token_analysis.csv")
-        
     except KeyboardInterrupt:
         print("\n⚠️ Analysis interrupted by user")
+        return None
     except Exception as e:
         print(f"❌ Error during analysis: {e}")
         import traceback
         traceback.print_exc()
+        return None
+
+def main():
+    print("=== Ethereum Token Price Extractor & Big Buy Analyzer ===")
+    
+    # Check if CSV file is provided as argument
+    if len(sys.argv) > 1:
+        csv_file = sys.argv[1]
+        
+        if not os.path.exists(csv_file):
+            print(f"❌ CSV file not found: {csv_file}")
+            return
+        
+        print(f"📁 Batch mode: Processing tokens from {csv_file}")
+        print("Supports both Uniswap V2 and V3 pools")
+        
+        # Get data source choice
+        data_source = get_data_source_choice()
+        
+        # Get number of blocks
+        default_blocks = 1000
+        blocks_input = input(f"\nEnter number of blocks to analyze per token (default {default_blocks}): ").strip()
+        
+        if blocks_input:
+            try:
+                num_blocks = int(blocks_input)
+            except ValueError:
+                print(f"Invalid input, using default: {default_blocks}")
+                num_blocks = default_blocks
+        else:
+            num_blocks = default_blocks
+        
+        # Calculate time estimate per token
+        hours = (num_blocks * 12) / 3600
+        if hours < 1:
+            minutes = hours * 60
+            time_estimate = f"~{minutes:.0f} minutes"
+        elif hours < 24:
+            time_estimate = f"~{hours:.1f} hours"
+        else:
+            days = hours / 24
+            time_estimate = f"~{days:.1f} days"
+        
+        print(f"Time estimate per token: {time_estimate} of blockchain data")
+        print(f"Data source: {'Archive Node' if data_source == 'node' else 'Etherscan API'}")
+        
+        proceed = input("Proceed with batch analysis? (y/n): ").strip().lower()
+        if proceed != 'y':
+            print("Analysis cancelled.")
+            return
+        
+        # Process tokens from CSV
+        process_tokens_from_csv(csv_file, data_source, num_blocks)
+        
+    else:
+        # Interactive mode
+        print("This tool will extract price data and analyze big buys for a token")
+        print("Supports both Uniswap V2 and V3 pools")
+        
+        # Get data source choice
+        data_source = get_data_source_choice()
+        
+        # Process single token interactively
+        process_single_token_interactive(data_source)
 
 if __name__ == "__main__":
     main()
