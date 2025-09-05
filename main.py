@@ -18,6 +18,7 @@ from src.pricing.object_csv_writer import ObjectCSVWriter
 from src.pricing.swap_jsonl_writer import SwapJSONLWriter
 from src.pricing.enhanced_csv_writer import EnhancedCSVWriter
 from src.pricing.pools_csv_writer import PoolsCSVWriter
+from src.pricing.big_buy_storage import BigBuyStorage
 from src.client.web3_client import Web3Client
 from src.config import USE_LOCAL_NODE
 
@@ -161,7 +162,12 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, sa
         # Save individual swaps if requested
         if save_swaps and results:
             print(f"\n💾 Saving individual swaps to JSONL...")
-            jsonl_writer = SwapJSONLWriter()
+            # Get web3 client for ETH price (try to get from first result)
+            web3_client = None
+            if results and hasattr(results[0], 'web3_client'):
+                web3_client = results[0].web3_client
+            
+            jsonl_writer = SwapJSONLWriter(web3_client)
             
             for result in results:
                 try:
@@ -188,8 +194,33 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, sa
                         else:
                             print(f"❌ Failed to save swaps for {token_short}")
                     
+                    # Detect and save big buys
+                    print(f"🔍 Detecting big buys for {token_short}...")
+                    big_buy_storage = BigBuyStorage(jsonl_writer.usdt_oracle)
+                    big_buys = big_buy_storage.detect_big_buys_from_swaps(
+                        swap_events, 
+                        result.get('pool_info', {})
+                    )
+                    
+                    if big_buys:
+                        # Save big buys to separate file
+                        big_buys_file = f"data/big_buys_{token_short}_{version}.jsonl"
+                        success_bb = big_buy_storage.save_big_buys_to_jsonl(big_buys, big_buys_file)
+                        
+                        if success_bb:
+                            print(f"🔥 {len(big_buys)} big buys saved to {big_buys_file}.gz")
+                            
+                            # Show summary
+                            summary = big_buy_storage.get_big_buy_summary(big_buys)
+                            print(f"💎 Total volume: {summary['total_eth_volume']:.6f} ETH / {summary['total_usdt_volume']:.2f} USDT")
+                            print(f"📊 Largest buy: {summary['largest_eth']:.6f} ETH / {summary['largest_usdt']:.2f} USDT")
+                        else:
+                            print(f"❌ Failed to save big buys for {token_short}")
+                    else:
+                        print(f"ℹ️  No big buys detected for {token_short}")
+                    
                 except Exception as e:
-                    print(f"❌ Error saving swaps: {e}")
+                    print(f"❌ Error processing token data: {e}")
                     continue
     else:
         print("❌ No results to save")

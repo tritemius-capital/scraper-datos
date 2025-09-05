@@ -10,14 +10,16 @@ import gzip
 import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+from .usdt_oracle import USDTOracle
 
 logger = logging.getLogger(__name__)
 
 class SwapJSONLWriter:
     """Writes individual swap events to JSONL format (optionally compressed)"""
     
-    def __init__(self):
+    def __init__(self, web3_client=None):
         self.logger = logging.getLogger(__name__)
+        self.usdt_oracle = USDTOracle(web3_client)
     
     def write_swaps_to_jsonl(self, swaps: List[Dict], output_file: str, 
                            pool_address: str, version: str, compress: bool = True, 
@@ -163,8 +165,18 @@ class SwapJSONLWriter:
             # Convert version to number
             version_num = 3 if version.lower() == 'v3' else 2
             
-            # Create minimal swap object - production schema
-            # Note: t0/t1 removed as they're in pools.csv to avoid repetition
+            # Calculate USDT value
+            usdt_value_raw = None
+            big_buy_flag = 0
+            
+            if pool_info:
+                usdt_value_raw = self.usdt_oracle.get_usdt_value_raw(
+                    {"a0": str(amount0), "a1": str(amount1), "b": block_number}, 
+                    pool_info
+                )
+                big_buy_flag = 1 if self.usdt_oracle.is_big_buy_usdt(usdt_value_raw) else 0
+            
+            # Create comprehensive swap object with all information
             minimal_swap = {
                 "t": int(timestamp),
                 "b": int(block_number),
@@ -174,8 +186,34 @@ class SwapJSONLWriter:
                 "a0": str(amount0),  # Raw amount (see JSONL_SCHEMA.md for sign convention)
                 "a1": str(amount1),  # Raw amount (see JSONL_SCHEMA.md for sign convention)
                 "sd": str(sender).lower(),  # sender address
-                "rc": str(recipient).lower()  # recipient address
+                "rc": str(recipient).lower(),  # recipient address
+                "usdt": str(usdt_value_raw) if usdt_value_raw is not None else "0",  # USDT crudo (6 decimales)
+                "bb": big_buy_flag,  # big buy flag
             }
+            
+            # Add additional swap information if available
+            if swap.get('gasUsed'):
+                minimal_swap['gas_used'] = str(swap['gasUsed'])
+            if swap.get('gasPrice'):
+                minimal_swap['gas_price'] = str(swap['gasPrice'])
+            
+            # Add price information if available
+            if swap.get('price'):
+                minimal_swap['price'] = str(swap['price'])
+            if swap.get('price_usd'):
+                minimal_swap['price_usd'] = str(swap['price_usd'])
+            
+            # Add liquidity change information (V3)
+            if version_num == 3 and swap.get('liquidity'):
+                minimal_swap['liquidity'] = str(swap['liquidity'])
+            
+            # Add tick information (V3)
+            if version_num == 3 and swap.get('tick'):
+                minimal_swap['tick'] = str(swap['tick'])
+            
+            # Add sqrtPriceX96 (V3)
+            if version_num == 3 and swap.get('sqrtPriceX96'):
+                minimal_swap['sqrt_price'] = str(swap['sqrtPriceX96'])
             
             return minimal_swap
             

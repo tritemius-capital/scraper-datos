@@ -87,9 +87,21 @@ class EnhancedCSVWriter:
                         # Extract pool info
                         pool_info = result.get('pool_info', {})
                         
-                        # Extract big buy analysis
+                        # Extract big buy analysis (debug and fix)
                         big_buy_analysis = result.get('big_buy_analysis', {})
-                        big_buys = big_buy_analysis.get('big_buys', []) if isinstance(big_buy_analysis, dict) else []
+                        
+                        # Debug: check structure
+                        self.logger.info(f"Big buy analysis keys: {list(big_buy_analysis.keys()) if isinstance(big_buy_analysis, dict) else 'not dict'}")
+                        
+                        if isinstance(big_buy_analysis, dict):
+                            big_buys = big_buy_analysis.get('big_buys', [])
+                            # Also try alternative field names
+                            if not big_buys:
+                                big_buys = big_buy_analysis.get('buys', [])
+                        else:
+                            big_buys = []
+                        
+                        self.logger.info(f"Extracted {len(big_buys)} big buys for processing")
                         
                         # Extract advanced analytics
                         advanced_analytics = result.get('advanced_analytics', {})
