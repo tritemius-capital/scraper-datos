@@ -10,14 +10,22 @@ import json
 import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
+from .jsonl_metrics_calculator import JSONLMetricsCalculator
 
 logger = logging.getLogger(__name__)
+
+# Import here to avoid circular imports
+try:
+    from .jsonl_metrics_calculator import JSONLMetricsCalculator
+except ImportError:
+    JSONLMetricsCalculator = None
 
 class EnhancedCSVWriter:
     """Enhanced CSV writer for clean aggregated token analysis data"""
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
+        self.metrics_calculator = JSONLMetricsCalculator()
     
     def save_enhanced_analysis_csv(self, 
                                  results: List[Dict],

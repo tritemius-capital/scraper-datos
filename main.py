@@ -19,6 +19,7 @@ from src.pricing.swap_jsonl_writer import SwapJSONLWriter
 from src.pricing.enhanced_csv_writer import EnhancedCSVWriter
 # from src.pricing.pools_csv_writer import PoolsCSVWriter  # No longer needed
 from src.pricing.big_buy_storage import BigBuyStorage
+from src.pricing.jsonl_metrics_calculator import JSONLMetricsCalculator
 from src.client.web3_client import Web3Client
 from src.config import USE_LOCAL_NODE
 
@@ -194,6 +195,12 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, sa
                         
                         if success:
                             print(f"📄 {len(swap_events)} swaps saved to {swaps_file}.gz")
+                            
+                            # Calculate metrics from JSONL and add to result
+                            metrics_calc = JSONLMetricsCalculator()
+                            metrics = metrics_calc.calculate_metrics_from_jsonl(f"{swaps_file}.gz")
+                            result.update(metrics)
+                            
                         else:
                             print(f"❌ Failed to save swaps for {token_short}")
                     
