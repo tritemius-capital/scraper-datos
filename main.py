@@ -127,11 +127,13 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, sa
             # Handle version field (could be int like 2,3 or string like "V2","V3")
             version_raw = row['version']
             if isinstance(version_raw, (int, float)):
-                version = f"V{int(version_raw)}"
+                version = f"v{int(version_raw)}"
             else:
-                version = str(version_raw).upper()
-                if not version.startswith('V'):
-                    version = f"V{version}"
+                version_str = str(version_raw).lower()
+                if version_str.startswith('v'):
+                    version = version_str
+                else:
+                    version = f"v{version_str}"
             token_address = row['nombre']  # Token address
             pool_address = row['par']      # Pool address
             
