@@ -65,7 +65,8 @@ class ETHPriceReader:
     def _get_eth_price_from_node(self, block_number: Optional[int] = None) -> float:
         """Get ETH price from archive node using Chainlink oracle"""
         try:
-            return self.web3_client.get_eth_price_usd(block_number)
+            # Note: Chainlink oracle gives current price, not historical
+            return self.web3_client.get_eth_price_usd()
         except Exception as e:
             logger.error(f"Error getting ETH price from node: {e}")
             # Fallback to default price

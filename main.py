@@ -15,6 +15,8 @@ import os
 import pandas as pd
 from src.uniswap import UniswapExtractorFactory
 from src.pricing.object_csv_writer import ObjectCSVWriter
+from src.pricing.swap_jsonl_writer import SwapJSONLWriter
+from src.pricing.enhanced_csv_writer import EnhancedCSVWriter
 from src.client.web3_client import Web3Client
 from src.config import USE_LOCAL_NODE
 
@@ -98,7 +100,7 @@ def process_single_token_interactive(data_source: str):
     # Process the token
     process_token(token_address, pool_address, version, num_blocks, data_source, 1, 1)
 
-def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int):
+def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, save_swaps: bool = False):
     """Process all tokens from CSV file"""
     
     print(f"\n=== Processing tokens from {csv_file} ===")
@@ -136,28 +138,50 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int):
             traceback.print_exc()
             continue
     
-    # Save all results
+    # Save all results using enhanced CSV writer
     if results:
-        output_file = 'data/batch_token_analysis.csv'
+        output_file = 'data/pr0y3kto_kp0p_XyZ.csv'
         print(f"\n💾 Saving {len(results)} results to {output_file}")
-        csv_writer = ObjectCSVWriter()
         
-        # Save each result individually
-        for i, result in enumerate(results):
-            append_mode = i > 0  # First write overwrites, subsequent writes append
-            csv_writer.save_prices_to_object_csv(
-                prices=result['prices'],
-                output_file=output_file,
-                token_address=result['token_address'],
-                pool_address=result['pool_address'],
-                uniswap_version=result['uniswap_version'],
-                stats=result.get('price_stats', {}),
-                big_buy_analysis={'big_buys': result.get('big_buys', [])},
-                append=append_mode
-            )
+        # Use enhanced CSV writer for clean aggregated data
+        enhanced_writer = EnhancedCSVWriter()
+        enhanced_writer.save_enhanced_analysis_csv(results, output_file)
         
         print(f"✅ Results saved successfully!")
         print(f"📁 Check the file: {output_file}")
+        
+        # Save individual swaps if requested
+        if save_swaps and results:
+            print(f"\n💾 Saving individual swaps to JSONL...")
+            jsonl_writer = SwapJSONLWriter()
+            
+            for result in results:
+                try:
+                    # Get all swap events for this token
+                    swap_events = result.get('prices', [])  # prices contains individual swaps
+                    
+                    if swap_events:
+                        # Create filename for this token's swaps
+                        token_short = result['token_address'][:8]
+                        version = result['uniswap_version'].lower()
+                        swaps_file = f"data/swaps_{token_short}_{version}.jsonl"
+                        
+                        success = jsonl_writer.write_swaps_to_jsonl(
+                            swaps=swap_events,
+                            output_file=swaps_file,
+                            pool_address=result['pool_address'],
+                            version=result['uniswap_version'],
+                            compress=True
+                        )
+                        
+                        if success:
+                            print(f"📄 {len(swap_events)} swaps saved to {swaps_file}.gz")
+                        else:
+                            print(f"❌ Failed to save swaps for {token_short}")
+                    
+                except Exception as e:
+                    print(f"❌ Error saving swaps: {e}")
+                    continue
     else:
         print("❌ No results to save")
 
@@ -320,6 +344,9 @@ def main():
         default_blocks = 1000
         blocks_input = input(f"\nEnter number of blocks to analyze per token (default {default_blocks}): ").strip()
         
+        # Save individual swaps by default (no user prompt)
+        save_swaps = True
+        
         if blocks_input:
             try:
                 num_blocks = int(blocks_input)
@@ -349,7 +376,7 @@ def main():
             return
         
         # Process tokens from CSV
-        process_tokens_from_csv(csv_file, data_source, num_blocks)
+        process_tokens_from_csv(csv_file, data_source, num_blocks, save_swaps)
         
     else:
         # Interactive mode

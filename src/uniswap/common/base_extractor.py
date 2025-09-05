@@ -188,6 +188,10 @@ class BaseUniswapExtractor(ABC):
         self.current_start_block = start_block
         self.current_end_block = end_block
         
+        # Get pool information
+        self.logger.info("Getting pool information...")
+        pool_info = self.get_pool_info(pool_address)
+        
         # Extract prices using the abstract method
         prices = self.extract_prices(token_address, pool_address, start_block, end_block)
         self.logger.info(f"Extracted {len(prices)} prices in analyze_token_complete")
@@ -198,6 +202,9 @@ class BaseUniswapExtractor(ABC):
                 'prices': [],
                 'price_stats': {},
                 'big_buy_analysis': {},
+                'pool_info': pool_info,
+                'blocks_analyzed': end_block - start_block + 1,
+                'data_source': 'archive_node' if self.use_node else 'etherscan_api',
                 'error': 'No prices found'
             }
         
@@ -248,6 +255,9 @@ class BaseUniswapExtractor(ABC):
             'price_stats': price_stats,
             'big_buy_analysis': big_buy_analysis,
             'advanced_analytics': advanced_analytics,
+            'pool_info': pool_info,
+            'blocks_analyzed': end_block - start_block + 1,
+            'data_source': 'archive_node' if self.use_node else 'etherscan_api',
             'error': None
         }
         self.logger.info("analyze_token_complete completed successfully")
