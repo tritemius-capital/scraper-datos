@@ -96,13 +96,13 @@ class UniswapV3Extractor(BaseUniswapExtractor):
 
     def get_pool_info(self, pool_address: str) -> Dict:
         """
-        Get Uniswap V3 pool information (token0, token1, decimals).
+        Get comprehensive Uniswap V3 pool information including TVL, token info, and current state.
         
         Args:
             pool_address: Address of the Uniswap V3 pool
             
         Returns:
-            Dictionary with pool information
+            Dictionary with comprehensive pool information
         """
         try:
             contract = self.w3.eth.contract(
@@ -119,12 +119,65 @@ class UniswapV3Extractor(BaseUniswapExtractor):
             decimals0 = token0_contract.functions.decimals().call()
             decimals1 = token1_contract.functions.decimals().call()
             
-            return {
+            # Basic pool info
+            pool_info = {
                 "token0": token0.lower(),
                 "token1": token1.lower(), 
                 "decimals0": decimals0,
-                "decimals1": decimals1
+                "decimals1": decimals1,
+                "pool_address": pool_address.lower(),
+                "version": "v3"
             }
+            
+            # Get additional info if using Archive Node
+            if self.use_node and hasattr(self, 'node_client') and self.node_client:
+                try:
+                    # Get token information
+                    token0_info = self.node_client.get_token_info(token0)
+                    token1_info = self.node_client.get_token_info(token1)
+                    
+                    # Get pool TVL
+                    tvl_info = self.node_client.get_pool_tvl(pool_address, token0, token1)
+                    
+                    # Get V3 slot0 data
+                    slot0_info = self.node_client.get_v3_pool_slot0(pool_address)
+                    
+                    # Get current ETH price
+                    eth_price_usd = self.node_client.get_eth_price_usd()
+                    
+                    # Add comprehensive info
+                    pool_info.update({
+                        "token0_info": token0_info,
+                        "token1_info": token1_info,
+                        "tvl": tvl_info,
+                        "slot0": slot0_info,
+                        "eth_price_usd_current": eth_price_usd,
+                        "current_block": self.node_client.get_current_block()
+                    })
+                    
+                    # Calculate current price from slot0 if available
+                    if slot0_info and 'sqrtPriceX96' in slot0_info:
+                        try:
+                            current_price = self.calculate_price_from_sqrt(
+                                slot0_info['sqrtPriceX96'], decimals0, decimals1
+                            )
+                            pool_info["current_price"] = current_price
+                            
+                            # Calculate market cap if we have token info
+                            if token0_info.get('totalSupplyFormatted') and current_price:
+                                pool_info["token0_market_cap"] = token0_info['totalSupplyFormatted'] * current_price
+                                
+                                # If token1 is WETH and we have ETH price, calculate USD market cap
+                                if token1.lower() == '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2' and eth_price_usd:
+                                    pool_info["token0_market_cap_usd"] = pool_info["token0_market_cap"] * eth_price_usd
+                        except Exception as e:
+                            self.logger.warning(f"Error calculating current price: {e}")
+                            
+                except Exception as e:
+                    self.logger.warning(f"Error getting extended pool info: {e}")
+            
+            return pool_info
+            
         except Exception as e:
             self.logger.error(f"Error getting V3 pool info for {pool_address}: {e}")
             raise
@@ -200,6 +253,28 @@ class UniswapV3Extractor(BaseUniswapExtractor):
         except Exception as e:
             self.logger.error(f"Error decoding V3 swap event: {e}")
             return None
+
+    def calculate_price_from_sqrt(self, sqrt_price_x96: int, decimals0: int, decimals1: int) -> float:
+        """
+        Calculate token price from sqrtPriceX96 (V3 format)
+        
+        Args:
+            sqrt_price_x96: Square root price in X96 format
+            decimals0: Token0 decimals
+            decimals1: Token1 decimals
+            
+        Returns:
+            Price of token0 in terms of token1
+        """
+        try:
+            # Convert sqrtPriceX96 to actual price
+            # price = (sqrtPriceX96 / 2^96)^2 * 10^(decimals1 - decimals0)
+            price = (sqrt_price_x96 / (2 ** 96)) ** 2
+            price = price * (10 ** (decimals1 - decimals0))
+            return price
+        except Exception as e:
+            self.logger.error(f"Error calculating price from sqrt: {e}")
+            return 0.0
 
     def calculate_token_price(self, decoded_event: Dict, pool_info: Dict, token_address: str) -> Optional[float]:
         """

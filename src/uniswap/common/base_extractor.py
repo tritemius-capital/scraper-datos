@@ -10,6 +10,7 @@ from typing import List, Dict, Optional
 import logging
 from web3 import Web3
 import os
+from src.pricing.advanced_analytics import AdvancedAnalytics
 
 
 class BaseUniswapExtractor(ABC):
@@ -48,6 +49,9 @@ class BaseUniswapExtractor(ABC):
         # Initialize ETH price reader
         self.web3_client = None  # Will be set by factory if using node
         self._init_eth_price_reader()
+        
+        # Initialize advanced analytics
+        self.analytics = AdvancedAnalytics()
     
     def _init_eth_price_reader(self):
         """Initialize ETH price reader based on configuration"""
@@ -207,10 +211,43 @@ class BaseUniswapExtractor(ABC):
         big_buy_analysis = self._analyze_big_buys(prices, threshold_eth)
         self.logger.info(f"Big buy analysis completed")
         
+        # Advanced analytics
+        self.logger.info("Running advanced analytics...")
+        advanced_analytics = {}
+        try:
+            # Get swap events for advanced analysis
+            swap_events = self.get_swap_events(pool_address, start_block, end_block)
+            
+            # Trading activity analysis
+            activity_analysis = self.analytics.analyze_trading_activity(swap_events)
+            
+            # Volume pattern analysis
+            volume_analysis = self.analytics.analyze_volume_patterns(swap_events, token_address)
+            
+            # Price impact analysis
+            price_impact_analysis = self.analytics.calculate_price_impact_analysis(prices)
+            
+            # Pool creation info (if using node)
+            pool_creation_info = {}
+            if self.use_node and hasattr(self, 'web3_client') and self.web3_client:
+                pool_creation_info = self.analytics.detect_pool_creation_info(pool_address, self.web3_client)
+            
+            advanced_analytics = {
+                'trading_activity': activity_analysis,
+                'volume_patterns': volume_analysis,
+                'price_impact': price_impact_analysis,
+                'pool_creation': pool_creation_info
+            }
+            
+        except Exception as e:
+            self.logger.warning(f"Error in advanced analytics: {e}")
+            advanced_analytics = {'error': str(e)}
+        
         result = {
             'prices': prices,
             'price_stats': price_stats,
             'big_buy_analysis': big_buy_analysis,
+            'advanced_analytics': advanced_analytics,
             'error': None
         }
         self.logger.info("analyze_token_complete completed successfully")
