@@ -171,7 +171,8 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, sa
                             output_file=swaps_file,
                             pool_address=result['pool_address'],
                             version=result['uniswap_version'],
-                            compress=True
+                            compress=True,
+                            pool_info=result.get('pool_info', {})
                         )
                         
                         if success:

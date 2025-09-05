@@ -20,7 +20,8 @@ class SwapJSONLWriter:
         self.logger = logging.getLogger(__name__)
     
     def write_swaps_to_jsonl(self, swaps: List[Dict], output_file: str, 
-                           pool_address: str, version: str, compress: bool = True) -> bool:
+                           pool_address: str, version: str, compress: bool = True, 
+                           pool_info: Optional[Dict] = None) -> bool:
         """
         Write swap events to JSONL format
         
@@ -56,7 +57,7 @@ class SwapJSONLWriter:
                     try:
                         # Convert swap to minimal JSONL format
                         minimal_swap = self._convert_to_minimal_format(
-                            swap, pool_address, version
+                            swap, pool_address, version, pool_info
                         )
                         
                         if minimal_swap:
@@ -75,7 +76,7 @@ class SwapJSONLWriter:
             self.logger.error(f"Error writing swaps to JSONL: {e}")
             return False
     
-    def _convert_to_minimal_format(self, swap: Dict, pool_address: str, version: str) -> Optional[Dict]:
+    def _convert_to_minimal_format(self, swap: Dict, pool_address: str, version: str, pool_info: Optional[Dict] = None) -> Optional[Dict]:
         """
         Convert swap event to minimal JSONL format
         
@@ -108,15 +109,23 @@ class SwapJSONLWriter:
             block_number = swap.get('blockNumber', swap.get('block_number', 0))
             tx_hash = swap.get('transactionHash', swap.get('transaction_hash', ''))
             
-            # Handle different formats of tx_hash
+            # Handle different formats of tx_hash and ensure 0x prefix
             if hasattr(tx_hash, 'hex'):
                 tx_hash = tx_hash.hex()
             elif not isinstance(tx_hash, str):
                 tx_hash = str(tx_hash)
             
-            # Get token addresses (try multiple field names)
-            token0 = swap.get('token0', '')
-            token1 = swap.get('token1', '')
+            # Ensure 0x prefix for hash
+            if tx_hash and not tx_hash.startswith('0x'):
+                tx_hash = '0x' + tx_hash
+            
+            # Get token addresses from pool_info or swap data
+            if pool_info:
+                token0 = pool_info.get('token0', '')
+                token1 = pool_info.get('token1', '')
+            else:
+                token0 = swap.get('token0', '')
+                token1 = swap.get('token1', '')
             
             # Get amounts - these should be in raw format (wei)
             amount0 = swap.get('amount0', swap.get('amount0In', 0))
@@ -170,7 +179,8 @@ class SwapJSONLWriter:
             return None
     
     def append_swaps_to_jsonl(self, swaps: List[Dict], output_file: str, 
-                            pool_address: str, version: str, compress: bool = True) -> bool:
+                            pool_address: str, version: str, compress: bool = True,
+                            pool_info: Optional[Dict] = None) -> bool:
         """
         Append swap events to existing JSONL file
         
@@ -201,7 +211,7 @@ class SwapJSONLWriter:
                 for swap in swaps:
                     try:
                         minimal_swap = self._convert_to_minimal_format(
-                            swap, pool_address, version
+                            swap, pool_address, version, pool_info
                         )
                         
                         if minimal_swap:
