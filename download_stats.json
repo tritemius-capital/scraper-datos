@@ -7,13 +7,13 @@
   "price_stats": {
     "min": 1417.78,
     "max": 4933.84,
-    "mean": 2772.0881215753425,
+    "mean": 2772.08889783105,
     "median": 2638.245
   },
   "file_sizes": {
-    "csv_complete": 1867034,
+    "csv_complete": 1867036,
     "csv_grepable": 488757,
-    "json": 4062910,
+    "json": 4062912,
     "txt_grepable": 488757
   }
 }

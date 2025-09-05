@@ -330,7 +330,7 @@ class UniswapV2Extractor(BaseUniswapExtractor):
                         timestamp = int(event['timeStamp'], 16)
                     
                     # Get ETH price at timestamp
-                    eth_price_usd = self.eth_price_reader.get_eth_price_at_timestamp(timestamp)
+                    eth_price_usd = self.eth_price_reader.get_eth_price(timestamp=timestamp)
                     
                     # Calculate token price
                     price_eth = self.calculate_token_price(decoded_event, pool_info, token_address)

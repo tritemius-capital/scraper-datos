@@ -1,309 +1,144 @@
-from web3 import Web3
-from typing import Optional, Dict, Any, List
-import json
+from web3 import Web3, HTTPProvider
+from web3.middleware import geth_poa_middleware
 import logging
-import os
-import requests
-try:
-    from eth_abi import decode
-except ImportError:
-    try:
-        from eth_abi import decode_abi as decode
-    except ImportError:
-        from eth_abi.main import decode_abi as decode
-from eth_utils import to_checksum_address
+from typing import Optional, Dict, List, Any, Union
+from hexbytes import HexBytes
+
+from ..config import NODE_RPC_URL, NODE_API_KEY
 
 logger = logging.getLogger(__name__)
 
-class Web3NodeClient:
-    """
-    Cliente para conectarse a un nodo propio de Ethereum
-    """
-    
-    def __init__(self, node_url: str, timeout: int = 120, api_key: Optional[str] = None):
-        """
-        Initialize Web3 client for Archive Node
+class Web3Client:
+    def __init__(self):
+        """Initialize Web3 client with the local node"""
+        if not NODE_RPC_URL or not NODE_API_KEY:
+            raise ValueError("NODE_RPC_URL and NODE_API_KEY must be set in .env")
         
-        Args:
-            node_url: Archive node RPC URL
-            timeout: Request timeout in seconds (increased for V3)
-            api_key: API key for authentication
-        """
-        self.node_url = node_url
-        self.api_key = api_key
+        # Add API key to headers if needed
+        headers = {"Authorization": f"Bearer {NODE_API_KEY}"}
         
-        # Verificar que la URL tenga el protocolo correcto
-        if not node_url.startswith(('http://', 'https://')):
-            logger.warning(f"URL del nodo no tiene protocolo, añadiendo https://: {node_url}")
-            node_url = f"https://{node_url}"
-            self.node_url = node_url
+        # Initialize Web3 with the node's RPC endpoint
+        self.w3 = Web3(HTTPProvider(NODE_RPC_URL, request_kwargs={"headers": headers}))
         
-        # Para Google Cloud Archive Node, el API key va como query parameter
-        if api_key:
-            if '?' in node_url:
-                node_url = f"{node_url}&key={api_key}"
-            else:
-                node_url = f"{node_url}?key={api_key}"
+        # Add middleware for POA chains (if needed)
+        self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
         
-        logger.info(f"Intentando conectar al nodo: {node_url}")
-        if api_key:
-            logger.info(f"Usando API key: {api_key[:10]}...")
+        # Test connection
+        if not self.w3.is_connected():
+            raise ConnectionError("Could not connect to Ethereum node")
         
-        # Configurar headers básicos
-        request_kwargs = {'timeout': timeout}
-        request_kwargs['headers'] = {'Content-Type': 'application/json'}
+        logger.info(f"Connected to Ethereum node. Chain ID: {self.w3.eth.chain_id}")
         
-        # Primero, verificar conectividad básica HTTP
-        try:
-            logger.info("Verificando conectividad HTTP básica...")
-            test_payload = {
-                "jsonrpc": "2.0",
-                "method": "eth_blockNumber",
-                "params": [],
-                "id": 1
+        # ETH/USD price oracle contracts (we'll use Chainlink)
+        self.CHAINLINK_ETH_USD = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"  # ETH/USD price feed
+        
+        # Chainlink price feed ABI (simplified)
+        self.CHAINLINK_ABI = [
+            {
+                "inputs": [],
+                "name": "latestRoundData",
+                "outputs": [
+                    {"name": "roundId", "type": "uint80"},
+                    {"name": "answer", "type": "int256"},
+                    {"name": "startedAt", "type": "uint256"},
+                    {"name": "updatedAt", "type": "uint256"},
+                    {"name": "answeredInRound", "type": "uint80"}
+                ],
+                "stateMutability": "view",
+                "type": "function"
             }
-            
-            headers = {'Content-Type': 'application/json'}
-            
-            response = requests.post(
-                node_url,
-                json=test_payload,
-                headers=headers,
-                timeout=timeout
-            )
-            
-            logger.info(f"Respuesta HTTP: Status {response.status_code}")
-            if response.status_code != 200:
-                logger.error(f"Error HTTP: {response.status_code} - {response.text}")
-                raise ConnectionError(f"Error HTTP {response.status_code}: {response.text}")
-            
-            # Verificar respuesta JSON-RPC
-            try:
-                json_response = response.json()
-                logger.info(f"Respuesta JSON-RPC: {json_response}")
-                
-                if 'error' in json_response:
-                    logger.error(f"Error JSON-RPC: {json_response['error']}")
-                    raise ConnectionError(f"Error JSON-RPC: {json_response['error']}")
-                
-                if 'result' not in json_response:
-                    logger.error(f"Respuesta JSON-RPC inválida: {json_response}")
-                    raise ConnectionError("Respuesta JSON-RPC inválida")
-                    
-            except json.JSONDecodeError as e:
-                logger.error(f"Error decodificando JSON: {e}")
-                logger.error(f"Contenido de respuesta: {response.text[:500]}")
-                raise ConnectionError(f"Error decodificando respuesta JSON: {e}")
-                
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error de conectividad HTTP: {e}")
-            raise ConnectionError(f"Error de conectividad: {e}")
-        
-        # Si llegamos aquí, la conectividad básica funciona, ahora inicializar Web3
-        try:
-            self.w3 = Web3(Web3.HTTPProvider(node_url, request_kwargs=request_kwargs))
-            
-            # Verificar conexión Web3
-            if not self.w3.is_connected():
-                raise ConnectionError("Web3 no pudo conectarse")
-            
-            # Probar obtener el último bloque para verificar que funciona
-            latest_block = self.w3.eth.block_number
-            logger.info(f"✅ Conectado exitosamente al nodo")
-            logger.info(f"Último bloque: {latest_block}")
-            
-        except Exception as e:
-            logger.error(f"Error inicializando Web3: {e}")
-            raise ConnectionError(f"Error inicializando Web3: {e}")
+        ]
     
     def get_latest_block(self) -> int:
-        """Obtiene el número del último bloque"""
+        """Get the latest block number"""
         return self.w3.eth.block_number
     
-    def get_block_info(self, block_number: int) -> Dict[str, Any]:
-        """Obtiene información detallada de un bloque"""
-        block = self.w3.eth.get_block(block_number, full_transactions=True)
-        return {
-            'number': block.number,
-            'hash': block.hash.hex(),
-            'timestamp': block.timestamp,
-            'transactions': len(block.transactions),
-            'gas_used': block.gasUsed,
-            'gas_limit': block.gasLimit
-        }
-    
-    def get_transaction_receipt(self, tx_hash: str) -> Dict[str, Any]:
-        """Obtiene el recibo de una transacción"""
-        receipt = self.w3.eth.get_transaction_receipt(tx_hash)
-        return {
-            'transaction_hash': receipt.transactionHash.hex(),
-            'block_number': receipt.blockNumber,
-            'gas_used': receipt.gasUsed,
-            'status': receipt.status,
-            'logs': [
-                {
-                    'address': log.address,
-                    'topics': [topic.hex() for topic in log.topics],
-                    'data': log.data.hex(),
-                    'block_number': log.blockNumber,
-                    'transaction_hash': log.transactionHash.hex(),
-                    'log_index': log.logIndex
-                }
-                for log in receipt.logs
-            ]
-        }
-    
-    def get_logs(self, 
-                 from_block: int, 
-                 to_block: int, 
-                 address: Optional[str] = None,
-                 topics: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    def get_eth_price_usd(self, block_number: Optional[int] = None) -> float:
         """
-        Obtiene logs de eventos de la blockchain
+        Get ETH price in USD from Chainlink oracle.
         
         Args:
-            from_block: Bloque inicial
-            to_block: Bloque final
-            address: Dirección del contrato (opcional)
-            topics: Topics del evento (opcional)
+            block_number: Block number for historical price (None for latest)
+            
+        Returns:
+            ETH price in USD
         """
-        # Convertir números de bloque a formato hexadecimal para JSON-RPC
-        from_block_hex = hex(from_block) if isinstance(from_block, int) else from_block
-        to_block_hex = hex(to_block) if isinstance(to_block, int) else to_block
-        
-        filter_params = {
-            'fromBlock': from_block_hex,
-            'toBlock': to_block_hex
-        }
-        
-        if address:
-            filter_params['address'] = to_checksum_address(address)
-        
-        if topics:
-            # Asegurar que todos los topics tengan el prefijo 0x
-            formatted_topics = []
-            for topic in topics:
-                if isinstance(topic, str) and not topic.startswith('0x'):
-                    formatted_topics.append(f'0x{topic}')
-                else:
-                    formatted_topics.append(topic)
-            filter_params['topics'] = formatted_topics
-        
-        logger.info(f"Enviando get_logs con parámetros: {filter_params}")
-        
         try:
-            # Hacer llamada JSON-RPC directa para evitar problemas de conversión de Web3.py
-            payload = {
-                "jsonrpc": "2.0",
-                "method": "eth_getLogs",
-                "params": [filter_params],
-                "id": 1
-            }
-            
-            # Usar la URL con API key que ya tenemos configurada
-            node_url = self.node_url
-            if self.api_key:
-                if '?' in node_url:
-                    request_url = f"{node_url}&key={self.api_key}"
-                else:
-                    request_url = f"{node_url}?key={self.api_key}"
-            else:
-                request_url = node_url
-            
-            response = requests.post(
-                request_url,  # Usar la URL con API key, no self.node_url
-                json=payload,
-                headers={'Content-Type': 'application/json'},
-                timeout=120  # Aumentado para V3 que tiene más datos
+            # Create contract instance
+            price_feed = self.w3.eth.contract(
+                address=self.CHAINLINK_ETH_USD,
+                abi=self.CHAINLINK_ABI
             )
             
-            if response.status_code != 200:
-                raise Exception(f"HTTP {response.status_code}: {response.text}")
+            # Get latest round data
+            if block_number:
+                # For historical data, we'd need to find the right round
+                # For now, just use latest price
+                logger.warning(f"Historical ETH price not implemented, using latest price for block {block_number}")
             
-            json_response = response.json()
+            round_data = price_feed.functions.latestRoundData().call()
             
-            if 'error' in json_response:
-                raise Exception(json_response['error'])
+            # Chainlink ETH/USD has 8 decimals
+            price = round_data[1] / 10**8
             
-            if 'result' not in json_response:
-                raise Exception(f"Respuesta inválida: {json_response}")
-            
-            logs_data = json_response['result']
-            logger.info(f"Recibidos {len(logs_data)} logs vía JSON-RPC directo")
-            
-            # Convertir a formato esperado
-            return [{
-                'address': log['address'],
-                'topics': log['topics'],
-                'data': log['data'],
-                'blockNumber': int(log['blockNumber'], 16),
-                'transactionHash': log['transactionHash'],
-                'log_index': int(log['logIndex'], 16)
-            } for log in logs_data]
+            logger.debug(f"ETH price from Chainlink: ${price:.2f}")
+            return price
             
         except Exception as e:
-            logger.error(f"Error en get_logs: {e}")
-            logger.error(f"Parámetros enviados: {filter_params}")
-            raise
+            logger.error(f"Error getting ETH price from Chainlink: {e}")
+            # Fallback to a reasonable default
+            logger.warning("Using fallback ETH price of $3000")
+            return 3000.0
     
-    def call_contract(self, 
-                     contract_address: str, 
-                     function_signature: str, 
-                     *args) -> Any:
-        """
-        Llama a una función de un contrato
-        
-        Args:
-            contract_address: Dirección del contrato
-            function_signature: Firma de la función (ej: "balanceOf(address)")
-            *args: Argumentos de la función
-        """
-        # Crear función ABI básica
-        abi = [{
-            "type": "function",
-            "name": function_signature.split('(')[0],
-            "inputs": [],
-            "outputs": [{"type": "uint256"}],
-            "stateMutability": "view"
-        }]
-        
-        contract = self.w3.eth.contract(
-            address=to_checksum_address(contract_address),
+    def get_logs(self, address: str, from_block: int, to_block: int, topics: List[str]) -> List[Dict[str, Any]]:
+        """Get event logs from the node"""
+        try:
+            filter_params = {
+                'address': Web3.to_checksum_address(address),
+                'fromBlock': from_block,
+                'toBlock': to_block,
+                'topics': topics
+            }
+            
+            logs = self.w3.eth.get_logs(filter_params)
+            return [dict(log) for log in logs]
+            
+        except Exception as e:
+            logger.error(f"Error getting logs: {e}")
+            return []
+    
+    def get_block_timestamp(self, block_number: int) -> int:
+        """Get block timestamp"""
+        try:
+            block = self.w3.eth.get_block(block_number)
+            return block.timestamp
+        except Exception as e:
+            logger.error(f"Error getting block timestamp: {e}")
+            return 0
+    
+    def get_contract(self, address: str, abi: List[Dict]) -> Any:
+        """Get contract instance"""
+        return self.w3.eth.contract(
+            address=Web3.to_checksum_address(address),
             abi=abi
         )
-        
-        # Llamar función
-        function_name = function_signature.split('(')[0]
-        function = getattr(contract.functions, function_name)
-        return function(*args).call()
     
-    def get_eth_balance(self, address: str) -> int:
-        """Obtiene el balance de ETH de una dirección"""
-        return self.w3.eth.get_balance(to_checksum_address(address))
-    
-    def get_token_balance(self, token_address: str, wallet_address: str) -> int:
-        """Obtiene el balance de un token ERC20"""
-        return self.call_contract(
-            token_address,
-            "balanceOf(address)",
-            wallet_address
-        )
-    
-    def decode_log_data(self, data: str, abi_types: List[str]) -> List[Any]:
-        """
-        Decodifica datos de logs usando tipos ABI
-        
-        Args:
-            data: Datos hex del log
-            abi_types: Lista de tipos ABI (ej: ["uint256", "address"])
-        """
-        if data.startswith('0x'):
-            data = data[2:]
-        
-        decoded = decode(abi_types, bytes.fromhex(data))
-        return decoded
-    
-    def get_contract_code(self, address: str) -> str:
-        """Obtiene el código de un contrato"""
-        code = self.w3.eth.get_code(to_checksum_address(address))
-        return code.hex() 
+    def decode_log(self, abi: List[Dict], log: Dict[str, Any]) -> Dict[str, Any]:
+        """Decode a log entry using the contract ABI"""
+        try:
+            contract = self.w3.eth.contract(abi=abi)
+            
+            # Convert topics to HexBytes if they're strings
+            if isinstance(log.get('topics', []), list):
+                log['topics'] = [
+                    HexBytes(topic) if isinstance(topic, str) else topic 
+                    for topic in log['topics']
+                ]
+            
+            # Decode the log
+            decoded = contract.events.Swap().process_log(log)
+            return decoded
+            
+        except Exception as e:
+            logger.error(f"Error decoding log: {e}")
+            return {} 
