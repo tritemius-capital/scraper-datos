@@ -17,6 +17,7 @@ from src.uniswap import UniswapExtractorFactory
 from src.pricing.object_csv_writer import ObjectCSVWriter
 from src.pricing.swap_jsonl_writer import SwapJSONLWriter
 from src.pricing.enhanced_csv_writer import EnhancedCSVWriter
+from src.pricing.pools_csv_writer import PoolsCSVWriter
 from src.client.web3_client import Web3Client
 from src.config import USE_LOCAL_NODE
 
@@ -149,6 +150,13 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, sa
         
         print(f"✅ Results saved successfully!")
         print(f"📁 Check the file: {output_file}")
+        
+        # Save pools metadata
+        pools_file = 'data/pools.csv'
+        print(f"\n💾 Saving pool metadata to {pools_file}")
+        pools_writer = PoolsCSVWriter()
+        pools_writer.save_pools_csv(results, pools_file)
+        print(f"📄 Pool metadata saved to {pools_file}")
         
         # Save individual swaps if requested
         if save_swaps and results:

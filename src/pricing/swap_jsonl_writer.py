@@ -148,28 +148,33 @@ class SwapJSONLWriter:
             sender = swap.get('sender', '')
             recipient = swap.get('recipient', swap.get('to', ''))
             
-            # Handle HexBytes objects
+            # Handle HexBytes objects and ensure 0x prefix
             if hasattr(sender, 'hex'):
                 sender = sender.hex()
             if hasattr(recipient, 'hex'):
                 recipient = recipient.hex()
             
+            # Ensure 0x prefix for addresses
+            if sender and not sender.startswith('0x'):
+                sender = '0x' + sender
+            if recipient and not recipient.startswith('0x'):
+                recipient = '0x' + recipient
+            
             # Convert version to number
             version_num = 3 if version.lower() == 'v3' else 2
             
-            # Create minimal swap object
+            # Create minimal swap object - production schema
+            # Note: t0/t1 removed as they're in pools.csv to avoid repetition
             minimal_swap = {
                 "t": int(timestamp),
                 "b": int(block_number),
-                "h": str(tx_hash).lower(),
+                "h": str(tx_hash),  # Keep 0x prefix
                 "p": str(pool_address).lower(),
                 "v": version_num,
-                "t0": str(token0).lower(),
-                "t1": str(token1).lower(),
-                "a0": str(amount0),  # Keep as string to preserve precision
-                "a1": str(amount1),
-                "s": str(sender).lower(),
-                "r": str(recipient).lower()
+                "a0": str(amount0),  # Raw amount (see JSONL_SCHEMA.md for sign convention)
+                "a1": str(amount1),  # Raw amount (see JSONL_SCHEMA.md for sign convention)
+                "sd": str(sender).lower(),  # sender address
+                "rc": str(recipient).lower()  # recipient address
             }
             
             return minimal_swap
