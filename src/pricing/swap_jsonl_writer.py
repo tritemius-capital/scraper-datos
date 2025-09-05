@@ -10,7 +10,7 @@ import gzip
 import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
-from .usdt_oracle import USDTOracle
+from .enhanced_usdt_oracle import EnhancedUSDTOracle
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ class SwapJSONLWriter:
     
     def __init__(self, web3_client=None):
         self.logger = logging.getLogger(__name__)
-        self.usdt_oracle = USDTOracle(web3_client)
+        self.usdt_oracle = EnhancedUSDTOracle(web3_client)
     
     def write_swaps_to_jsonl(self, swaps: List[Dict], output_file: str, 
                            pool_address: str, version: str, compress: bool = True, 
@@ -165,16 +165,16 @@ class SwapJSONLWriter:
             # Convert version to number
             version_num = 3 if version.lower() == 'v3' else 2
             
-            # Calculate USDT value
-            usdt_value_raw = None
-            big_buy_flag = 0
+            # Calculate USDT value and big buy flag using enhanced oracle
+            usdt_value_raw, big_buy_flag = self.usdt_oracle.get_usdt_value_for_swap(
+                {"a0": str(amount0), "a1": str(amount1), "b": block_number},
+                pool_address,
+                version
+            )
+            big_buy_flag = 1 if big_buy_flag else 0
             
-            if pool_info:
-                usdt_value_raw = self.usdt_oracle.get_usdt_value_raw(
-                    {"a0": str(amount0), "a1": str(amount1), "b": block_number}, 
-                    pool_info
-                )
-                big_buy_flag = 1 if self.usdt_oracle.is_big_buy_usdt(usdt_value_raw) else 0
+            # Get pool metadata for auto-contained JSONL
+            pool_metadata = self.usdt_oracle.get_pool_metadata(pool_address, version)
             
             # Create comprehensive swap object with all information
             minimal_swap = {
@@ -183,11 +183,15 @@ class SwapJSONLWriter:
                 "h": str(tx_hash),  # Keep 0x prefix
                 "p": str(pool_address).lower(),
                 "v": version_num,
+                "t0": pool_metadata.get('t0', ''),  # token0 address
+                "t1": pool_metadata.get('t1', ''),  # token1 address
+                "d0": pool_metadata.get('d0', 18),  # token0 decimals
+                "d1": pool_metadata.get('d1', 18),  # token1 decimals
                 "a0": str(amount0),  # Raw amount (see JSONL_SCHEMA.md for sign convention)
                 "a1": str(amount1),  # Raw amount (see JSONL_SCHEMA.md for sign convention)
                 "sd": str(sender).lower(),  # sender address
                 "rc": str(recipient).lower(),  # recipient address
-                "usdt": str(usdt_value_raw) if usdt_value_raw is not None else "0",  # USDT crudo (6 decimales)
+                "usdt": str(usdt_value_raw) if usdt_value_raw is not None else "0",  # USDT micro (6 decimals)
                 "bb": big_buy_flag,  # big buy flag
             }
             

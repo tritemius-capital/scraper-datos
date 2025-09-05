@@ -111,17 +111,56 @@ class UniswapV2Extractor(BaseUniswapExtractor):
             token0 = contract.functions.token0().call()
             token1 = contract.functions.token1().call()
             
-            # Get decimals for both tokens
+            # Get token information
             token0_contract = self.w3.eth.contract(address=token0, abi=self.ERC20_ABI)
             token1_contract = self.w3.eth.contract(address=token1, abi=self.ERC20_ABI)
+            
             decimals0 = token0_contract.functions.decimals().call()
             decimals1 = token1_contract.functions.decimals().call()
+            
+            # Try to get symbols and names (may fail for some tokens)
+            try:
+                symbol0 = token0_contract.functions.symbol().call()
+            except:
+                symbol0 = "UNKNOWN"
+            
+            try:
+                symbol1 = token1_contract.functions.symbol().call()
+            except:
+                symbol1 = "UNKNOWN"
+            
+            try:
+                name0 = token0_contract.functions.name().call()
+            except:
+                name0 = "Unknown"
+            
+            try:
+                name1 = token1_contract.functions.name().call()
+            except:
+                name1 = "Unknown"
+            
+            # Try to get total supply
+            try:
+                supply0 = token0_contract.functions.totalSupply().call()
+            except:
+                supply0 = 0
+            
+            try:
+                supply1 = token1_contract.functions.totalSupply().call()
+            except:
+                supply1 = 0
             
             return {
                 "token0": token0.lower(),
                 "token1": token1.lower(), 
                 "decimals0": decimals0,
-                "decimals1": decimals1
+                "decimals1": decimals1,
+                "token0_symbol": symbol0,
+                "token1_symbol": symbol1,
+                "token0_name": name0,
+                "token1_name": name1,
+                "token0_total_supply": supply0,
+                "token1_total_supply": supply1
             }
         except Exception as e:
             self.logger.error(f"Error getting pool info for {pool_address}: {e}")

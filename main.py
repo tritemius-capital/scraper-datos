@@ -17,7 +17,7 @@ from src.uniswap import UniswapExtractorFactory
 from src.pricing.object_csv_writer import ObjectCSVWriter
 from src.pricing.swap_jsonl_writer import SwapJSONLWriter
 from src.pricing.enhanced_csv_writer import EnhancedCSVWriter
-from src.pricing.pools_csv_writer import PoolsCSVWriter
+# from src.pricing.pools_csv_writer import PoolsCSVWriter  # No longer needed
 from src.pricing.big_buy_storage import BigBuyStorage
 from src.client.web3_client import Web3Client
 from src.config import USE_LOCAL_NODE
@@ -152,12 +152,8 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, sa
         print(f"✅ Results saved successfully!")
         print(f"📁 Check the file: {output_file}")
         
-        # Save pools metadata
-        pools_file = 'data/pools.csv'
-        print(f"\n💾 Saving pool metadata to {pools_file}")
-        pools_writer = PoolsCSVWriter()
-        pools_writer.save_pools_csv(results, pools_file)
-        print(f"📄 Pool metadata saved to {pools_file}")
+        # Note: Pool metadata is now embedded in each JSONL swap record (t0, t1, d0, d1)
+        # No separate pools.csv file needed
         
         # Save individual swaps if requested
         if save_swaps and results:
@@ -186,7 +182,7 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, sa
                             pool_address=result['pool_address'],
                             version=result['uniswap_version'],
                             compress=True,
-                            pool_info=result.get('pool_info', {})
+                            pool_info=pool_info
                         )
                         
                         if success:

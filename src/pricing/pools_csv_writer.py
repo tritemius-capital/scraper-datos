@@ -93,14 +93,22 @@ class PoolsCSVWriter:
                 'version': version.upper(),
                 'token0_address': pool_info.get('token0', '').lower(),
                 'token1_address': pool_info.get('token1', '').lower(),
-                'token0_symbol': pool_info.get('token0_symbol', 'UNKNOWN'),
-                'token1_symbol': pool_info.get('token1_symbol', 'UNKNOWN'),
-                'token0_name': pool_info.get('token0_name', 'Unknown'),
-                'token1_name': pool_info.get('token1_name', 'Unknown'),
-                'token0_decimals': pool_info.get('token0_decimals', 18),
-                'token1_decimals': pool_info.get('token1_decimals', 18),
-                'token0_total_supply': self._format_supply(pool_info.get('token0_total_supply', 0)),
-                'token1_total_supply': self._format_supply(pool_info.get('token1_total_supply', 0)),
+                'token0_symbol': pool_info.get('token0_symbol', 
+                    pool_info.get('token0_info', {}).get('symbol', 'UNKNOWN')),
+                'token1_symbol': pool_info.get('token1_symbol', 
+                    pool_info.get('token1_info', {}).get('symbol', 'UNKNOWN')),
+                'token0_name': pool_info.get('token0_name', 
+                    pool_info.get('token0_info', {}).get('name', 'Unknown')),
+                'token1_name': pool_info.get('token1_name', 
+                    pool_info.get('token1_info', {}).get('name', 'Unknown')),
+                'token0_decimals': pool_info.get('token0_decimals', pool_info.get('decimals0', 18)),
+                'token1_decimals': pool_info.get('token1_decimals', pool_info.get('decimals1', 18)),
+                'token0_total_supply': self._format_supply(
+                    pool_info.get('token0_total_supply', 
+                        pool_info.get('token0_info', {}).get('total_supply', 0))),
+                'token1_total_supply': self._format_supply(
+                    pool_info.get('token1_total_supply', 
+                        pool_info.get('token1_info', {}).get('total_supply', 0))),
             }
             
             # V3 specific data

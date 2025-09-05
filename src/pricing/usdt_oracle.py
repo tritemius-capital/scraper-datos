@@ -21,7 +21,7 @@ class USDTOracle:
         # Token addresses (mainnet)
         self.WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
         self.USDT = "0xdac17f958d2ee523a2206206994597c13d831ec7"
-        self.USDC = "0xa0b86a33e6417c24b5e8d2d6c28b67c6e3a8b1e2f"
+        self.USDC = "0xa0b86a33e6417c24b5e8d2d6c28b67c6e3a8b1e2f"  # USDC mainnet (verify this address)
         
         # Reference pools for price lookup
         self.WETH_USDC_POOL = "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"  # V3 0.05%
@@ -59,7 +59,6 @@ class USDTOracle:
             elif token0 == self.WETH.lower():
                 eth_usdt_scaled = self._get_eth_usdt_price_scaled(block)
                 if eth_usdt_scaled:
-                    # a0 is WETH in 1e18, convert to micro-USDT
                     return (abs(a0) * eth_usdt_scaled) // (10 ** 18)
             elif token1 == self.WETH.lower():
                 eth_usdt_scaled = self._get_eth_usdt_price_scaled(block)
