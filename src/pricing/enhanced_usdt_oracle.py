@@ -17,11 +17,11 @@ class EnhancedUSDTOracle:
         # Token addresses (mainnet)
         self.WETH = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2"
         self.USDT = "0xdac17f958d2ee523a2206206994597c13d831ec7"
-        self.USDC = "0xa0b86a33e6417c24b5e8d2d6c28b67c6e3a8b1e2f"
+        self.USDC = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"  # Circle USDC (correct address)
         
-        # Reference pools for price lookup
-        self.WETH_USDC_POOL = "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"  # V3 0.05%
-        self.USDC_USDT_POOL = "0x3416cf6c708da44db2624d63ea0aaef7113527c6"  # V3 0.01%
+        # Reference pools for price lookup (verified addresses)
+        self.WETH_USDC_POOL = "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640"  # V3 0.05% WETH/USDC
+        self.USDC_USDT_POOL = "0x3416cf6c708da44db2624d63ea0aaef7113527c6"  # V3 0.01% USDC/USDT
         
         # Caches
         self.pool_metadata_cache = {}  # pool_address -> {t0, t1, d0, d1, version, fee}
@@ -106,28 +106,31 @@ class EnhancedUSDTOracle:
             return self.eth_usdt_price_cache[block_range]
         
         try:
-            # Try to get current ETH price from Chainlink via web3_client
+            # Primary: Get historical ETH price from WETH/USDC V3 pool at the specific block
+            eth_usdc_price = self._get_v3_price_from_slot0(self.WETH_USDC_POOL, block_number)
+            if eth_usdc_price and eth_usdc_price > 0:
+                # USDC ≈ USDT for most purposes (stable coin peg)
+                scaled_price = int(eth_usdc_price * 1_000_000)  # Convert to micro-USDT
+                self.eth_usdt_price_cache[block_range] = scaled_price
+                self.logger.debug(f"Historical ETH price for block {block_number}: ${eth_usdc_price:.2f}")
+                return scaled_price
+            
+            # Fallback 1: Try current ETH price from Chainlink (less accurate for historical data)
             if self.web3_client and hasattr(self.web3_client, 'get_eth_price_usd'):
                 try:
                     eth_usd_price = self.web3_client.get_eth_price_usd()
                     if eth_usd_price and eth_usd_price > 0:
                         scaled_price = int(eth_usd_price * 1_000_000)  # Convert to micro-USDT
                         self.eth_usdt_price_cache[block_range] = scaled_price
+                        self.logger.warning(f"Using current ETH price ${eth_usd_price:.2f} for historical block {block_number}")
                         return scaled_price
                 except Exception as e:
                     self.logger.warning(f"Error getting ETH price from Chainlink: {e}")
             
-            # Fallback: use V3 WETH/USDC pool slot0
-            eth_usdc_price = self._get_v3_price_from_slot0(self.WETH_USDC_POOL, block_number)
-            if eth_usdc_price:
-                # USDC ≈ USDT for most purposes, or chain with USDC/USDT pool
-                scaled_price = int(eth_usdc_price * 1_000_000)  # Convert to micro-USDT
-                self.eth_usdt_price_cache[block_range] = scaled_price
-                return scaled_price
-            
-            # Final fallback
+            # Final fallback (should rarely be used now)
             fallback_price = int(3500.0 * 1_000_000)  # $3500 in micro-USDT
             self.eth_usdt_price_cache[block_range] = fallback_price
+            self.logger.error(f"Using fallback ETH price $3500 for block {block_number} - this may be inaccurate!")
             return fallback_price
             
         except Exception as e:
@@ -135,7 +138,7 @@ class EnhancedUSDTOracle:
             return None
     
     def _get_v3_price_from_slot0(self, pool_address: str, block_number: int) -> Optional[float]:
-        """Get price from V3 pool slot0"""
+        """Get historical ETH price from V3 WETH/USDC pool at specific block"""
         try:
             if not self.web3_client or not hasattr(self.web3_client, 'w3'):
                 return None
@@ -165,24 +168,54 @@ class EnhancedUSDTOracle:
                 abi=slot0_abi
             )
             
+            # Get historical slot0 data at the specific block
             slot0_data = pool_contract.functions.slot0().call(block_identifier=block_number)
             sqrt_price_x96 = slot0_data[0]
             
-            # Convert sqrtPriceX96 to actual price
-            # price = (sqrtPriceX96 ** 2) / (2 ** 192)
-            # For WETH/USDC: adjust for decimals (18 vs 6)
-            price_raw = (sqrt_price_x96 ** 2) / (2 ** 192)
-            price_adjusted = price_raw * (10 ** (6 - 18))  # USDC has 6 decimals, WETH has 18
+            if sqrt_price_x96 == 0:
+                return None
             
-            # This gives us USDC per WETH, we want the inverse (WETH price in USDC)
-            if price_adjusted > 0:
-                weth_price_usdc = 1 / price_adjusted
-                return weth_price_usdc
+            # Convert sqrtPriceX96 to actual price
+            # Formula: price = (sqrtPriceX96 / 2^96)^2 * 10^(decimal1 - decimal0)
+            # For WETH/USDC pool: token0=WETH(18), token1=USDC(6)
+            
+            # Step 1: (sqrtPriceX96 / 2^96)^2
+            price_ratio = (sqrt_price_x96 / (2 ** 96)) ** 2
+            
+            # Step 2: Adjust for decimals (USDC has 6, WETH has 18)
+            # This gives us USDC per WETH (what we want)
+            weth_price_usdc = price_ratio * (10 ** (6 - 18))
+            
+            # The result is negative due to decimal adjustment, so we need the absolute value
+            # and then invert because we want WETH price in USDC
+            weth_price_usdc = abs(weth_price_usdc)
+            
+            if weth_price_usdc > 0:
+                # Actually, let's recalculate this properly
+                # sqrtPriceX96 = sqrt(price) * 2^96
+                # price = (sqrtPriceX96 / 2^96)^2
+                # For WETH/USDC, this gives us USDC/WETH rate
+                
+                price_raw = (sqrt_price_x96 ** 2) / (2 ** 192)  # This is the raw price ratio
+                
+                # For USDC/WETH pool: token0=USDC(6), token1=WETH(18)
+                # price_raw gives us token1/token0 = WETH/USDC (small number)
+                # We want USDC/WETH (large number like ~4000)
+                
+                # Adjust for decimals: USDC(6) vs WETH(18) = 10^12 difference
+                weth_per_usdc = price_raw / (10 ** 12)  # WETH per USDC (very small)
+                
+                if weth_per_usdc > 0:
+                    # Invert to get USDC per WETH (the ETH price we want)
+                    usdc_per_weth = 1 / weth_per_usdc
+                    return usdc_per_weth
+                else:
+                    return None
             
             return None
             
         except Exception as e:
-            self.logger.warning(f"Error getting V3 price from slot0: {e}")
+            self.logger.warning(f"Error getting historical ETH price from block {block_number}: {e}")
             return None
     
     def get_usdt_value_for_swap(self, swap: Dict, pool_address: str, version: str) -> Tuple[Optional[int], bool]:
