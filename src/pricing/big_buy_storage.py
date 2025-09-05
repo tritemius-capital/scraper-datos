@@ -79,9 +79,23 @@ class BigBuyStorage:
             if not tx_hash.startswith('0x'):
                 tx_hash = '0x' + tx_hash
             
-            # Get amounts
-            amount0 = int(swap.get('amount0', swap.get('a0', 0)))
-            amount1 = int(swap.get('amount1', swap.get('a1', 0)))
+            # Get amounts - handle different formats
+            amount0 = swap.get('amount0', swap.get('a0', 0))
+            amount1 = swap.get('amount1', swap.get('a1', 0))
+            
+            # For V2: calculate net amounts from In/Out
+            if not amount0 and not amount1:
+                amount0_in = int(swap.get('amount0In', 0))
+                amount1_in = int(swap.get('amount1In', 0))
+                amount0_out = int(swap.get('amount0Out', 0))
+                amount1_out = int(swap.get('amount1Out', 0))
+                
+                # Net amount = Out - In (positive = pool gives to trader)
+                amount0 = amount0_out - amount0_in
+                amount1 = amount1_out - amount1_in
+            
+            amount0 = int(amount0)
+            amount1 = int(amount1)
             
             # Get token info
             token0 = pool_info.get('token0', '').lower()
@@ -118,11 +132,13 @@ class BigBuyStorage:
             is_big_buy_usdt = False
             
             if self.usdt_oracle:
-                usdt_value_raw = self.usdt_oracle.get_usdt_value_raw(
+                # Use the enhanced oracle's method
+                usdt_value_raw, is_big_buy_usdt = self.usdt_oracle.get_usdt_value_for_swap(
                     {"a0": str(amount0), "a1": str(amount1), "b": block_number},
-                    pool_info
-                ) or 0
-                is_big_buy_usdt = self.usdt_oracle.is_big_buy_usdt(usdt_value_raw)
+                    pool_info.get('pool_address', ''),
+                    pool_info.get('version', 'V2')
+                )
+                usdt_value_raw = usdt_value_raw or 0
             
             # If it's a big buy by either metric and it's a buy transaction
             if is_buy and (is_big_buy_eth or is_big_buy_usdt):

@@ -158,15 +158,22 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, sa
         # Save individual swaps if requested
         if save_swaps and results:
             print(f"\n💾 Saving individual swaps to JSONL...")
-            # Get web3 client for ETH price (try to get from first result)
+            # Create web3 client for USDT oracle
             web3_client = None
-            if results and hasattr(results[0], 'web3_client'):
-                web3_client = results[0].web3_client
+            try:
+                web3_client = Web3Client()
+            except Exception as e:
+                print(f"⚠️  Warning: Could not create Web3 client for USDT oracle: {e}")
+                print(f"   Will use fallback ETH price")
             
             jsonl_writer = SwapJSONLWriter(web3_client)
             
             for result in results:
                 try:
+                    # Get basic info first (to avoid NameError)
+                    token_short = result.get('token_address', 'unknown')[:8]
+                    version = result.get('uniswap_version', 'V2').lower()
+                    
                     # Get all swap events for this token
                     swap_events = result.get('prices', [])  # prices contains individual swaps
                     
@@ -182,7 +189,7 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, sa
                             pool_address=result['pool_address'],
                             version=result['uniswap_version'],
                             compress=True,
-                            pool_info=pool_info
+                            pool_info=result.get('pool_info', {})
                         )
                         
                         if success:
@@ -191,11 +198,20 @@ def process_tokens_from_csv(csv_file: str, data_source: str, num_blocks: int, sa
                             print(f"❌ Failed to save swaps for {token_short}")
                     
                     # Detect and save big buys
+                    token_short = result['token_address'][:8]  # Define token_short here too
                     print(f"🔍 Detecting big buys for {token_short}...")
                     big_buy_storage = BigBuyStorage(jsonl_writer.usdt_oracle)
+                    
+                    # Build complete pool_info for big buy detection
+                    pool_info_for_big_buys = result.get('pool_info', {}).copy()
+                    pool_info_for_big_buys.update({
+                        'pool_address': result.get('pool_address', ''),
+                        'version': result.get('uniswap_version', 'V2')
+                    })
+                    
                     big_buys = big_buy_storage.detect_big_buys_from_swaps(
                         swap_events, 
-                        result.get('pool_info', {})
+                        pool_info_for_big_buys
                     )
                     
                     if big_buys:
